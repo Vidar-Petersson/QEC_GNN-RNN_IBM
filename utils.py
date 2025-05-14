@@ -1,3 +1,4 @@
+import os
 import numpy as np
 import torch.nn as nn
 from torch.nn.utils.rnn import pack_padded_sequence, pad_sequence
@@ -49,7 +50,9 @@ class GraphConvLayer(nn.Module):
 
 class TrainingLogger:
     def __init__(self, logfile=None, statsfile=None):
-        logging.basicConfig(filename=logfile, level=logging.INFO, format="%(message)s")
+        if logfile:
+            os.makedirs("./logs", exist_ok=True)
+        logging.basicConfig(filename=f"./logs/{logfile}", level=logging.INFO, format="%(message)s")
         self.logs = []
         self.statsfile = statsfile
         self.best_accuracy = 0 
@@ -78,9 +81,7 @@ class TrainingLogger:
     def on_training_begin(self, args):
         logging.info(f"Training with t = {args.t}, dt = {args.dt}, distance = {args.distance}")
     
-    def on_training_end(self, zero, one):
-        self.zero = zero 
-        self.one = one
+    def on_training_end(self):
         stats = np.vstack((
             [logs["model_time"] for logs in self.logs],
             [logs["data_time"] for logs in self.logs],
@@ -94,4 +95,12 @@ class TrainingLogger:
             [logs["noflip"] for logs in self.logs],
         ))
         if self.statsfile:
-            np.save(self.statsfile, stats)
+            os.makedirs("./stats", exist_ok=True)
+            np.save(f"./stats/{self.statsfile}", stats)
+
+def standard_deviation(p, n):
+    """
+    Standard deviation of the Binomial distribution.
+    https://en.wikipedia.org/wiki/Binomial_distribution
+    """
+    return np.sqrt(p * (1 - p) / n)
