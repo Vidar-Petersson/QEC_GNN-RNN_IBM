@@ -1,0 +1,11 @@
+.venv 
+.vscode 
+.DS_Store
+QEC.yml
+__pycache__/
+*.log
+*.sif
+/wandb
+/logs
+/models/temp/
+/src/models/
