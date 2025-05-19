@@ -1,3 +1,5 @@
+# not finished 
+
 # Repo containing the code for the master’s thesis "Sequential Graph-Based Decoding of the Surface Code".
 
 This Git repo contains simplified source code for creating and testing the combined graph neural network and recurrent neural network used in "Title". 
