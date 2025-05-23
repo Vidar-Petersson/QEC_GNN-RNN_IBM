@@ -1,6 +1,6 @@
 # not finished 
 
-# Repo containing the code for the master’s thesis "Sequential Graph-Based Decoding of the Surface Code".
+# Repo containing the code for the master’s thesis "Sequential Graph-Based Decoding of the Surface Code using a Hybrid Graph and Recurrent Neural Network Model".
 
 This Git repo contains simplified source code for creating and testing the combined graph neural network and recurrent neural network used in "Title". 
 
@@ -12,3 +12,4 @@ Contains the dataclass Args defining the parameters for the model and the data g
 
 
 The current settings are best suited for large batch sizes and a server training setup.
+
