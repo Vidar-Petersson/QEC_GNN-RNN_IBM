@@ -17,7 +17,7 @@ class Args:
     # Torch
     device: torch.device = field(
     default_factory=lambda: torch.device(
-        
+        "mps" if torch.backends.mps.is_available() else
         "cuda" if torch.cuda.is_available() else
         "cpu"
     ))
@@ -31,3 +31,4 @@ class Args:
     embedding_features: list = field(default_factory=lambda: [5, 32, 64, 128, 256])
     hidden_size: int = 128 
     n_gru_layers: int = 4
+    log_wandb: bool = False

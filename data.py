@@ -387,6 +387,7 @@ class Dataset:
         label_map = label_map.to(dtype=torch.float32, device=self.device)
         edge_index = edge_index.to(self.device)
         edge_attr = edge_attr.to(self.device)
+        lengths = lengths.to(self.device)
 
         return node_features, edge_index, labels, label_map, edge_attr, aligned_flips, lengths, last_label
     

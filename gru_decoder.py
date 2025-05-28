@@ -8,6 +8,8 @@ from torch.nn.utils.rnn import pad_packed_sequence
 from tqdm import tqdm
 from torch.optim.lr_scheduler import LambdaLR
 from copy import deepcopy
+import wandb
+os.environ["WANDB_SILENT"] = "True"
 
 class GRUDecoder(nn.Module):
     """
@@ -69,6 +71,9 @@ class GRUDecoder(nn.Module):
         ) -> None:
         local_log = isinstance(logger, TrainingLogger)
         best_model = self.state_dict()
+
+        if self.args.log_wandb:
+            wandb.init(project="GNN-RNN-surface_code", name = save, config = self.args)
 
         if local_log:
             logger.on_training_begin(self.args)
@@ -138,6 +143,8 @@ class GRUDecoder(nn.Module):
                 "model_time": model_time
             }
 
+            if self.args.log_wandb:
+                wandb.log(metrics)
             if local_log:
                 logger.on_epoch_end(logs=metrics)
 
@@ -166,11 +173,11 @@ class GRUDecoder(nn.Module):
         data_time, model_time = 0, 0
         for i in tqdm(range(n_iter), disable=not verbose):
             t0 = time.perf_counter()
-            x, edge_index, batch_labels, label_map, edge_attr, flips = dataset.generate_batch()
+            x, edge_index, batch_labels, label_map, edge_attr, aligned_flips, lengths, last_label = dataset.generate_batch()
             t1 = time.perf_counter() 
-            out = self.forward(x, edge_index, edge_attr, batch_labels, label_map)
+            out, final_prediction = self.forward(x, edge_index, edge_attr, batch_labels, label_map)
             t2 = time.perf_counter()
-            accuracy_list[i] = torch.sum(torch.round(out) == flips) / torch.numel(flips)
+            accuracy_list[i] = torch.sum(torch.round(final_prediction) == last_label) / torch.numel
             data_time += t1 - t0
             model_time += t2 - t1
         accuracy = accuracy_list.mean()
