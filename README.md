@@ -1,5 +1,3 @@
-# not finished 
-
 # Sequential Graph-Based Decoding of the Surface Code using a Hybrid Graph and Recurrent Neural Network Model
 
 This Git repo contains simplified source code for creating and testing our combined graph neural network and recurrent neural network used for decoding the surface code.
