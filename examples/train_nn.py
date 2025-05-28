@@ -4,23 +4,30 @@ from gru_decoder import GRUDecoder
 from data import Args
 from utils import TrainingLogger
 import torch
+from datetime import datetime
 
 if __name__ == "__main__":
-    # Let's train a distance 5 model:
+    d = 5
+    t = 49
+    dt = 2
     args = Args(
-        distance=5,
+        distance=d,
         error_rates=[0.001, 0.002, 0.003, 0.004, 0.005],
-        t=[49],
-        dt=2,
+        t=[t],
+        dt=dt,
         sliding=True,
         batch_size=64,
-        n_batches=10,
-        n_epochs=10,
+        n_batches=100,
+        n_epochs=100,
         embedding_features=[5, 32, 64, 128, 256],
         hidden_size=128,
-        n_layers=4,
+        n_gru_layers=4,
     )
+    current_datetime = datetime.now().strftime("%y%m%d_%H%M%S")
+    model_name = 'd' + str(d) + '_t' + str(t) + '_dt' + str(dt) + '_' + current_datetime
 
-    logger = TrainingLogger(logfile="logs", statsfile="stats")
-    decoder_d5 = torch.compile(GRUDecoder(args))
-    decoder_d5.train_model(logger, save="decoder_d5")
+    logger = TrainingLogger(logfile=model_name, statsfile=model_name)
+    decoder = GRUDecoder(args)
+    decoder.to(args.device)  # Move model to MPS or appropriate device
+    decoder = torch.compile(decoder)  # Then compile
+    decoder.train_model(logger, save=model_name)

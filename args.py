@@ -15,7 +15,12 @@ class Args:
     norm: float | int = torch.inf
 
     # Torch
-    device: torch.device = field(default_factory=lambda: torch.device("cuda" if torch.cuda.is_available() else "cpu"))
+    device: torch.device = field(
+    default_factory=lambda: torch.device(
+        
+        "cuda" if torch.cuda.is_available() else
+        "cpu"
+    ))
     batch_size: int = 2048
     n_batches: int = 256
     n_epochs: int = 600
@@ -25,4 +30,4 @@ class Args:
     # Model
     embedding_features: list = field(default_factory=lambda: [5, 32, 64, 128, 256])
     hidden_size: int = 128 
-    n_layers: int = 4
+    n_gru_layers: int = 4

@@ -4,6 +4,7 @@ from data import Dataset
 from args import Args
 from utils import GraphConvLayer, TrainingLogger, group, standard_deviation
 from torch_geometric.nn import global_mean_pool
+from torch.nn.utils.rnn import pad_packed_sequence
 from tqdm import tqdm
 from torch.optim.lr_scheduler import LambdaLR
 from copy import deepcopy
@@ -18,16 +19,16 @@ class GRUDecoder(nn.Module):
         
         features = list(zip(args.embedding_features[:-1], args.embedding_features[1:]))
         self.embedding =  nn.ModuleList([GraphConvLayer(a, b) for a, b in features])
-        
-        self.decoder = nn.Sequential(
-            nn.Linear(args.hidden_size, 1),
-            nn.Sigmoid()
-        )
 
         self.rnn = nn.GRU(
             args.embedding_features[-1],
-            args.hidden_size, num_layers=args.n_layers,
+            args.hidden_size, num_layers=args.n_gru_layers,
             batch_first=True
+        )
+
+        self.decoder = nn.Sequential(
+            nn.Linear(args.hidden_size, 1),
+            nn.Sigmoid()
         )
 
     def embed(self, x, edge_index, edge_attr, batch_labels):
@@ -36,10 +37,30 @@ class GRUDecoder(nn.Module):
         return global_mean_pool(x, batch_labels)
 
     def forward(self, x, edge_index, edge_attr, batch_labels, label_map):
+        # Run embedding + group
         x = self.embed(x, edge_index, edge_attr, batch_labels)
         x = group(x, label_map)
-        _, h = self.rnn(x)
-        return self.decoder(h[-1]) 
+
+        # GRU output: out_packed is packed sequence, h is final hidden state
+        out_packed, h = self.rnn(x)
+
+        # Unpack the output to get predictions over all chunks
+        # out shape: [batch_size, g_actual, hidden_size]
+        out, _ = pad_packed_sequence(out_packed, batch_first=True)
+
+        # Apply decoder to get chunkwise predictions (e.g. for time-resolved loss)
+        # predictions shape: [batch_size, g_actual]
+        predictions = self.decoder(out).squeeze(-1)
+
+        # Get final prediction from the last hidden layer for each sample
+        # h shape: [n_layers, batch_size, hidden_size]
+        # h[-1] is the final layer's output → shape: [batch_size, hidden_size]
+        # final_prediction shape: [batch_size, 1]
+        final_prediction = self.decoder(h[-1])
+
+        # Return both time-resolved and final prediction
+        return predictions, final_prediction
+
 
     def train_model(
             self, 
@@ -57,7 +78,6 @@ class GRUDecoder(nn.Module):
         optim = torch.optim.Adam(self.parameters(), lr=self.args.lr)
         schedule = lambda epoch: max(0.95 ** epoch, self.args.min_lr / self.args.lr)
         scheduler = LambdaLR(optim, lr_lambda=schedule)
-        loss_fn = nn.BCELoss()
         best_accuracy = 0
         
         for i in range(1, self.args.n_epochs + 1):
@@ -66,8 +86,6 @@ class GRUDecoder(nn.Module):
         
             epoch_loss = 0
             epoch_acc = 0
-            n_class_0 = 0
-            zero, one = [], []
             data_time = 0
             model_time = 0
         
@@ -75,11 +93,30 @@ class GRUDecoder(nn.Module):
                 optim.zero_grad()
     
                 t0 = time.perf_counter() 
-                x, edge_index, batch_labels, label_map, edge_attr, flips = dataset.generate_batch()
-                t1 = time.perf_counter() 
-                
-                out = self.forward(x, edge_index, edge_attr, batch_labels, label_map)
-                loss = loss_fn(out, flips.type(torch.float32))
+                x, edge_index, batch_labels, label_map, edge_attr, aligned_flips, lengths, last_label = dataset.generate_batch()
+
+                t1 = time.perf_counter()
+                # Forward pass through the model
+                # out has shape [B, g_actual], where:
+                #   B = batch size
+                #   g_actual = maximum number of non-empty chunks in batch
+                # (can vary between batches, <= t - dt + 2)
+                out, final_prediction = self.forward(x, edge_index, edge_attr, batch_labels, label_map)
+
+                # Create a boolean mask of shape [B, g_actual] indicating valid chunk positions
+                # For each batch element b, mask[b, i] = True if i < lengths[b]
+                # lengths[b] is the number of non-empty chunks for batch element b
+                mask = torch.arange(out.size(1), device=out.device)[None, :] < lengths[:, None]
+
+                # Compute binary cross-entropy loss for each element without reduction
+                # loss_raw has shape [B, g_actual], matching the shape of out and aligned_flips
+                loss_raw = nn.functional.binary_cross_entropy(out, aligned_flips, reduction='none')
+
+                # Apply the mask to zero out the loss from padded (non-existent) chunks
+                # Then compute the mean loss over all valid elements
+                loss = (loss_raw * mask).sum() / mask.sum()
+
+                # Backpropagation and optimization step
                 loss.backward()
                 optim.step()
                 
@@ -89,27 +126,13 @@ class GRUDecoder(nn.Module):
                 data_time += t1 - t0
                 model_time += t2 - t1
                 epoch_loss += loss.item()
-                epoch_acc += (torch.sum(torch.round(out) == flips) / torch.numel(flips)).item()
-                n_class_0 += torch.sum(flips.squeeze() == 0).item()
-                zero.append(out[flips == 0])
-                one.append(out[flips == 1]) 
-            
-            zero = torch.hstack(zero).detach().cpu()
-            one = torch.hstack(one).detach().cpu()
-            zero_mean, zero_std = zero.mean().item(), zero.std().item()
-            one_mean, one_std = one.mean().item(), one.std().item()
+                epoch_acc += (torch.sum(torch.round(final_prediction) == last_label) / torch.numel(last_label)).item()
             epoch_loss /= self.args.n_batches
             epoch_acc /= self.args.n_batches
-            noflip = n_class_0 / (torch.numel(flips) * self.args.n_batches)
 
             metrics = {
                 "loss":  epoch_loss,
                 "accuracy": epoch_acc,
-                "zero_mean": zero_mean,
-                "zero_std": zero_std,
-                "one_mean": one_mean,
-                "one_std": one_std,
-                "noflip": noflip,
                 "lr": scheduler.get_last_lr()[0],
                 "data_time": data_time,
                 "model_time": model_time

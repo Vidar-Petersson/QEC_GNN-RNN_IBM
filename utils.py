@@ -8,6 +8,122 @@ import logging
 import time
 from typing import Dict
 StateDict = Dict[str, torch.Tensor]
+import stim
+
+def make_surface_code_with_logical_z_tracking(distance: int, rounds: int, error_rate: float) -> stim.Circuit:
+    base = stim.Circuit.generated(
+        code_task="surface_code:rotated_memory_x",
+        distance=distance,
+        rounds=rounds,
+        after_clifford_depolarization=error_rate,
+        after_reset_flip_probability=error_rate,
+        before_measure_flip_probability=error_rate,
+        before_round_data_depolarization=error_rate,
+    )
+
+    # Split into prefix, repeat block, and suffix
+    for i, instr in enumerate(base):
+        if isinstance(instr, stim.CircuitRepeatBlock):
+            prefix = base[:i]
+            repeat_block = instr
+            suffix = base[i+1:]
+            break
+    else:
+        raise ValueError("No REPEAT block found in generated circuit.")
+    def get_logical_z_qubits_west_edge(circuit: stim.Circuit) -> list[int]:
+        coords = circuit.get_final_qubit_coordinates()
+        return sorted(
+            [q for q, (x, y) in coords.items() if x == 1],
+            key=lambda q: coords[q][1]  # sort by y
+        )
+    # Get logical Z path: western row of data qubits in rotated layout
+    logical_z_qubits = get_logical_z_qubits_west_edge(base)
+
+    def logical_z_measurement_block(index: int) -> stim.Circuit:
+        c = stim.Circuit()
+        anc = 0
+        c.append("R", [anc])
+        for q in logical_z_qubits:
+            c.append("H", [q])
+        for q in logical_z_qubits:
+            c.append("CX", [q, anc])
+        for q in logical_z_qubits:
+            c.append("H", [q])
+        c.append("MR", [anc])
+        c += stim.Circuit(f"OBSERVABLE_INCLUDE({index}) rec[-1]")
+        return c
+
+    # Patch detector offsets in repeat block
+    def patch_detector_offsets(circuit_block, extra_offset):
+        patched = stim.Circuit()
+        for instr in circuit_block:
+            if instr.name == "DETECTOR":
+                targets = instr.targets_copy()
+                args = []
+                rec_count = sum(t.is_measurement_record_target for t in targets)
+                rec_seen = 0
+                for t in targets:
+                    if t.is_measurement_record_target:
+                        rec_seen += 1
+                        shift = extra_offset if rec_seen == rec_count else 0
+                        args.append(f"rec[{t.value - shift}]")
+                    else:
+                        args.append(str(t))
+                loc = "(" + ", ".join(str(x) for x in instr.gate_args_copy()) + ")" if instr.gate_args_copy() else ""
+                patched += stim.Circuit(f"DETECTOR{loc} " + " ".join(args))
+            else:
+                patched.append(instr)
+        return patched
+
+    patched_repeat_block = patch_detector_offsets(repeat_block.body_copy(), extra_offset=1)
+
+    new_circuit = stim.Circuit()
+    new_circuit.append("QUBIT_COORDS", [0], [0, 0])  # Ancilla at index 0, coord (0, 0)
+    new_circuit += prefix
+    new_circuit += logical_z_measurement_block(0)
+
+    for r in range(1, rounds - 1):
+        new_circuit += patched_repeat_block
+        new_circuit += logical_z_measurement_block(r)
+    # no ancilla based measurement of Z_L in last round, take direct measurement of
+    # original circuit instead
+    new_circuit += patched_repeat_block
+
+    patched_suffix = stim.Circuit()
+
+    def patch_detector_offsets_suffix(suffix, extra_offset=1):
+        patched = stim.Circuit()
+        for instr in suffix:
+            if instr.name == "DETECTOR":
+                targets = instr.targets_copy()
+                args = []
+                rec_count = sum(t.is_measurement_record_target for t in targets)
+                rec_seen = 0
+                for t in targets:
+                    if t.is_measurement_record_target:
+                        rec_seen += 1
+                        shift = extra_offset if rec_seen == rec_count else 0
+                        args.append(f"rec[{t.value - shift}]")
+                    else:
+                        args.append(str(t))
+                loc = "(" + ", ".join(str(x) for x in instr.gate_args_copy()) + ")" if instr.gate_args_copy() else ""
+                patched += stim.Circuit(f"DETECTOR{loc} " + " ".join(args))
+
+            elif instr.name == "OBSERVABLE_INCLUDE":
+                # Only relabel observable index; keep original rec[] indices
+                targets = instr.targets_copy()
+                rec_targets = " ".join(f"rec[{t.value}]" for t in targets)
+                patched += stim.Circuit(f"OBSERVABLE_INCLUDE({rounds - 1}) {rec_targets}")
+
+            else:
+                patched.append(instr)
+        return patched
+
+
+    patched_suffix = patch_detector_offsets_suffix(suffix, extra_offset=1)
+    new_circuit += patched_suffix
+
+    return new_circuit
 
 def group(x, label_map):
         """
@@ -20,8 +136,8 @@ def group(x, label_map):
         Returns: 
         A tensor of shape [batch size, g, embedding size] where
             g represents the number of graphs belonging to a batch element. 
-            If t = 24 and dt = 5, then g = 5, i.e. g = (t + 1) / dt.
-            Batch elements may contain less than (t + 1) / dt graphs. 
+            If t = 24 and dt = 5, then g = 5, i.e. g = t - dt + 2.
+            Batch elements may contain less than t - dt + 2 graphs. 
             This happens when there are no detection events in a chunk. 
             For instance, if t = 24 and dt = 5, and no detection
             events occur between timesteps 0 and 4, there would
@@ -36,6 +152,7 @@ def group(x, label_map):
         counts = torch.unique(label_map[:, 0], return_counts=True)[-1]
         grouped = torch.split(x, list(counts))
         padded = pad_sequence(grouped, batch_first=True)
+        # padded has shape [batch, t, embedding_features[-1]]
         return pack_padded_sequence(padded, counts.cpu(), batch_first=True, enforce_sorted=False)
 
 class GraphConvLayer(nn.Module):
@@ -52,7 +169,7 @@ class TrainingLogger:
     def __init__(self, logfile=None, statsfile=None):
         if logfile:
             os.makedirs("./logs", exist_ok=True)
-        logging.basicConfig(filename=f"./logs/{logfile}", level=logging.INFO, format="%(message)s")
+        logging.basicConfig(filename=f"./logs/{logfile}.out", level=logging.INFO, format="%(message)s")
         self.logs = []
         self.statsfile = statsfile
         self.best_accuracy = 0 
@@ -69,10 +186,6 @@ class TrainingLogger:
         logging.info(
             f"EPOCH {self.epoch} finished in {epoch_time:.3f} seconds with lr = {logs['lr']:.2e}:\n"
             f"\tloss = {logs['loss']:.5f}, accuracy = {logs['accuracy']:.4f} ({self.best_accuracy:.4f})\n"
-            f"\tclass 0: mean = {logs['zero_mean']:.4f} std = {logs['zero_std']:.4f} "
-            f"fraction = {logs['noflip']:.4f}\n"
-            f"\tclass 1: mean = {logs['one_mean']:.4f} std = {logs['one_std']:.4f} "
-            f"fraction = {1 - logs['noflip']:.4f}\n"
             f"\tmodel time = {logs['model_time']:.2f} seconds, "
             f"data time = {logs['data_time']:.2f} seconds"
         )
@@ -88,11 +201,6 @@ class TrainingLogger:
             [logs["lr"] for logs in self.logs],
             [logs["loss"] for logs in self.logs],
             [logs["accuracy"] for logs in self.logs],
-            [logs["zero_mean"] for logs in self.logs],
-            [logs["zero_std"] for logs in self.logs],
-            [logs["one_mean"] for logs in self.logs],
-            [logs["one_std"] for logs in self.logs],
-            [logs["noflip"] for logs in self.logs],
         ))
         if self.statsfile:
             os.makedirs("./stats", exist_ok=True)

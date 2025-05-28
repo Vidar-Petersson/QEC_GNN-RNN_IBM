@@ -5,8 +5,12 @@ QEC.yml
 __pycache__/
 *.log
 *.sif
+*.txt
+*.ipynb
+*.yaml
 /wandb
 /logs
 /models/temp/
 /src/models/
 /stats
+/models
