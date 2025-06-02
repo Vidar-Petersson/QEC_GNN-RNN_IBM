@@ -80,9 +80,9 @@ class GRUDecoder(nn.Module):
         
         self.train()
         dataset = Dataset(self.args)
-        optim = torch.optim.Adam(self.parameters(), lr=self.args.lr)
-        schedule = lambda epoch: max(0.95 ** epoch, self.args.min_lr / self.args.lr)
-        scheduler = LambdaLR(optim, lr_lambda=schedule)
+        optim = torch.optim.Adam(self.parameters(), lr=self.args.min_lr)
+        # schedule = lambda epoch: max(0.95 ** epoch, self.args.min_lr / self.args.lr)
+        # scheduler = LambdaLR(optim, lr_lambda=schedule)
         best_accuracy = 0
         
         for i in range(1, self.args.n_epochs + 1):
@@ -138,7 +138,7 @@ class GRUDecoder(nn.Module):
             metrics = {
                 "loss":  epoch_loss,
                 "accuracy": epoch_acc,
-                "lr": scheduler.get_last_lr()[0],
+                "lr": self.args.min_lr,
                 "data_time": data_time,
                 "model_time": model_time
             }
@@ -150,18 +150,15 @@ class GRUDecoder(nn.Module):
 
             if epoch_acc > best_accuracy:
                 best_accuracy = epoch_acc
-                best_model = deepcopy(self.state_dict())
-
-            scheduler.step()
-
-        self.load_state_dict(best_model)
+                if save:
+                    os.makedirs("./models", exist_ok=True)
+                    torch.save(self.state_dict(), f"./models/{save}.pt")
         
+            # scheduler.step()
+            
         if local_log:
             logger.on_training_end()
 
-        if save:
-            os.makedirs("./models", exist_ok=True)
-            torch.save(self.state_dict(), f"./models/{save}.pt")
 
     def test_model(self, dataset: Dataset, n_iter=1000, verbose=True):
         """
