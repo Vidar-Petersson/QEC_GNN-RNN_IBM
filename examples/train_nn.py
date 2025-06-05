@@ -31,13 +31,14 @@ if __name__ == "__main__":
         t=[t],
         dt=dt,
         sliding=True,
+        train_all_times = False,
         batch_size=args_cli.batch_size,
         n_batches=args_cli.n_batches,
         n_epochs=args_cli.n_epochs,
         embedding_features=[5, 32, 64, 128, 256],
         hidden_size=128,
         n_gru_layers=4,
-        log_wandb=False
+        log_wandb=True
     )
     current_datetime = datetime.now().strftime("%y%m%d_%H%M%S")
     model_name = 'd' + str(d) + '_t' + str(t) + '_dt' + str(dt) + '_' + current_datetime

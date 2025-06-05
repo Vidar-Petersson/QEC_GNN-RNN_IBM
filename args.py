@@ -13,6 +13,7 @@ class Args:
     k: int = 20
     seed: int | None = None
     norm: float | int = torch.inf
+    train_all_times: bool = True
 
     # Torch
     device: torch.device = field(

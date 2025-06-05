@@ -359,7 +359,7 @@ class Dataset:
 
         # Keep only labels at chunk boundaries (i.e., end of each chunk)
         flips = flips[:, self.dt - 1:]  # shape: [batch_size, g - 1], where g = t - dt + 2
-        flips = torch.from_numpy(flips).to(self.device)
+        flips = torch.from_numpy(flips).to(dtype=torch.float32, device=self.device)
         # Append the last label one more time to get [B, g]
         last_label = flips[:, -1:]  # shape [B, 1]
         flips = torch.cat([flips, last_label], dim=1)  # shape [B, g]

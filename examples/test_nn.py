@@ -16,14 +16,13 @@ if __name__ == "__main__":
     parser.add_argument('--n_iter', type=int, default=100)
     args_cli = parser.parse_args()
 
-    # Let's load and test the distance 5 model:
     args = Args(
         distance=args_cli.d,
         error_rates=[args_cli.p],
         t=[args_cli.t],
         dt=args_cli.dt,
         sliding=True,
-        batch_size=128,
+        batch_size=1000,
         embedding_features=[5, 32, 64, 128, 256],
         hidden_size=128,
         n_gru_layers=4,
@@ -31,8 +30,25 @@ if __name__ == "__main__":
     )
 
     decoder = GRUDecoder(args)
-    decoder.load_state_dict(torch.load("./models/d5_t49_dt2_250528_142527.pt", weights_only=True))
+    decoder.load_state_dict(torch.load("./models/d3_t49_dt2_250528_152916.pt", weights_only=True, map_location=args.device))
     n_iter = args_cli.n_iter
     decoder.to(args.device)  # Move model to MPS or appropriate device
-    decoder.test_model(Dataset(args), n_iter=n_iter)
-    test_mwpm(Dataset(args), n_iter=n_iter)
+    accuracies = []
+    for t in [9, 14, 24, 49, 74, 99, 249, 499, 749, 999]:
+        print('Starting with t=',t)
+        args = Args(
+            distance=args_cli.d,
+            error_rates=[args_cli.p],
+            t=[t],
+            dt=args_cli.dt,
+            sliding=True,
+            batch_size=1000,
+            embedding_features=[5, 32, 64, 128, 256],
+            hidden_size=128,
+            n_gru_layers=4,
+            seed=42 
+        )
+        acc, std = decoder.test_model(Dataset(args), n_iter=n_iter)
+        accuracies.append(acc)
+        print(t, acc)
+    print(accuracies)
