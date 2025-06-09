@@ -1,7 +1,7 @@
 import sys, os
 sys.path.append(os.path.join(os.path.dirname(__file__), os.pardir))
 from gru_decoder import GRUDecoder
-from data import Args
+from qec_data import Args
 import torch
 
 if __name__ == "__main__":
