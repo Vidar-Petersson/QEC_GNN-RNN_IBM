@@ -1,6 +1,6 @@
 import torch, time, os
 import torch.nn as nn 
-from qec_data import Dataset
+from data_stim import Dataset
 from args import Args
 from utils import GraphConvLayer, TrainingLogger, group, standard_deviation
 from torch_geometric.nn import global_mean_pool

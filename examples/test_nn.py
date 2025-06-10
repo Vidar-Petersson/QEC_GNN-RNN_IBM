@@ -1,7 +1,7 @@
 import sys, os
 sys.path.append(os.path.join(os.path.dirname(__file__), os.pardir))
 from gru_decoder import GRUDecoder
-from qec_data import Dataset, Args
+from data_ibm import Dataset, Args
 from mwmp import test_mwpm
 import torch
 import argparse
@@ -30,7 +30,7 @@ if __name__ == "__main__":
     )
 
     decoder = GRUDecoder(args)
-    decoder.load_state_dict(torch.load("./models/distance3.pt", weights_only=True, map_location=args.device))
+    decoder.load_state_dict(torch.load("./models/distance5.pt", weights_only=True, map_location=args.device))
     # decoder.load_state_dict(torch.load("./models/d3_t49_dt2_250528_152916.pt", weights_only=True, map_location=args.device))
     n_iter = args_cli.n_iter
     decoder.to(args.device)  # Move model to MPS or appropriate device

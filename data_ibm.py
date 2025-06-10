@@ -10,6 +10,7 @@ from args import Args
 from torch_geometric.nn.pool import knn_graph
 from utils import make_surface_code_with_logical_z_tracking
 import collections
+import random
 
 class FlipType(Enum):
     BIT = 1
@@ -113,6 +114,7 @@ class Dataset:
 
         # The final syndrome mask distinguishes X (1) and Z (3) stabilizers
         self.syndrome_mask = syndrome_x + syndrome_z
+        print(self.syndrome_mask)
 
 
     def sample_syndromes(self, sampler_idx: int) -> tuple[np.ndarray, np.ndarray]:
@@ -149,8 +151,11 @@ class Dataset:
         # Sample until we get a batch where each element has at least
         # one detection event. 
         while len(detection_events_list) < self.batch_size: 
-            detection_events, observable_flips = sampler.sample(
-                shots=self.batch_size, separate_observables=True)
+            detection_events, observable_flips = sampler.sample(shots=self.batch_size, separate_observables=True)
+            #detection_events = np.random.choice([False, True], size=(1000, self.t[sampler_idx]*24),p=[0.999, 0.001]).astype(bool)
+            #observable_flips = np.random.choice([False, True], size=(1000, self.t[sampler_idx]),p=[0.999, 0.001]).astype(bool)
+            # print("det_events",detection_events.shape, detection_events)
+            # print("obs_flips",observable_flips.shape, observable_flips)
             shots_w_flips = np.sum(detection_events, axis=1) != 0 # only include cases where there is at least one detection event.
             detection_events_list.extend(detection_events[shots_w_flips, :])
             observable_flips_list.extend(observable_flips[shots_w_flips, :])

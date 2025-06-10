@@ -1,5 +1,5 @@
 import pymatching 
-from qec_data import Dataset
+from data_stim import Dataset
 from utils import standard_deviation
 import numpy as np
 from tqdm import tqdm
