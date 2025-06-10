@@ -85,45 +85,14 @@ def make_surface_code_with_logical_z_tracking(distance: int, rounds: int, error_
     for r in range(1, rounds - 1):
         new_circuit += patched_repeat_block
         new_circuit += logical_z_measurement_block(r)
+
+    new_circuit += patched_repeat_block
     # no ancilla based measurement of Z_L in last round, take direct measurement of
     # original circuit instead
-    new_circuit += patched_repeat_block
-
-    patched_suffix = stim.Circuit()
-
-    def patch_detector_offsets_suffix(suffix, extra_offset=1):
-        patched = stim.Circuit()
-        for instr in suffix:
-            if instr.name == "DETECTOR":
-                targets = instr.targets_copy()
-                args = []
-                rec_count = sum(t.is_measurement_record_target for t in targets)
-                rec_seen = 0
-                for t in targets:
-                    if t.is_measurement_record_target:
-                        rec_seen += 1
-                        shift = extra_offset if rec_seen == rec_count else 0
-                        args.append(f"rec[{t.value - shift}]")
-                    else:
-                        args.append(str(t))
-                loc = "(" + ", ".join(str(x) for x in instr.gate_args_copy()) + ")" if instr.gate_args_copy() else ""
-                patched += stim.Circuit(f"DETECTOR{loc} " + " ".join(args))
-
-            elif instr.name == "OBSERVABLE_INCLUDE":
-                # Only relabel observable index; keep original rec[] indices
-                targets = instr.targets_copy()
-                rec_targets = " ".join(f"rec[{t.value}]" for t in targets)
-                patched += stim.Circuit(f"OBSERVABLE_INCLUDE({rounds - 1}) {rec_targets}")
-
-            else:
-                patched.append(instr)
-        return patched
-
-
-    patched_suffix = patch_detector_offsets_suffix(suffix, extra_offset=1)
-    new_circuit += patched_suffix
+    new_circuit += suffix
 
     return new_circuit
+
 
 def group(x, label_map):
         """
