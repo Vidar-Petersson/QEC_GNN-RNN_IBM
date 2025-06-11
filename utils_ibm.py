@@ -1,5 +1,5 @@
 import numpy as np
-import torch
+from pathlib import Path
 import os
 import re
 import json
@@ -10,7 +10,7 @@ class IBM_sampler:
     If jobdata doesn't exists for the desired config, ask to generate it via IBM Quantum."""
     
     def __init__(self, distance: int, t: int, batch_size: int):
-        self.job_dir = "./ibm_jobdata/"
+        self.job_dir = Path("./ibm_jobdata/")
         self.distance = distance 
         self.t = t
         self.batch_size = batch_size
@@ -49,7 +49,7 @@ class IBM_sampler:
     def generate_jobdata(self):
         raise NotImplementedError
     
-    def load_jobdata(self):
+    def load_jobdata(self) -> tuple[np.ndarray, np.ndarray]:
         """
         Parse one JSON job, extract detection events, build a complete
         Chebyshev-distance graph for each nontrivial shot:
@@ -60,24 +60,15 @@ class IBM_sampler:
         Returns:
         data -- pythorch dataset with graphs and correct labels with correct format for GNN-network
         """
-        job = self.job_dir + self.filename
+        job = self.job_dir / self.filename
         result = None
-        try:
-            with open(job) as f:
-                result = json.load(f,cls=RuntimeDecoder)[0]
-        except:
-            with open(job) as f:
-                result = json.load(f,cls=RuntimeDecoder)
-
+        with open(job) as f:
+            result = json.load(f,cls=RuntimeDecoder)[0]
 
         ### EXTRACT SYNDROME
-        def get_syndrome_from_qbits(qbits):
-            # qbits is list of bit-strings or lists like [['0','1',…],…]
-            arr = np.array([list(s) for s in qbits], dtype='<U1').astype(np.int8)
-            # XOR adjacent columns
-            diffs = arr[:, :-1] ^ arr[:, 1:]       # shape (shots, d-1)
-            # Join each row’s bits with minimal overhead
-            return [''.join(map(str, row)) for row in diffs]
+        def get_syndrome_from_qbits(qbits: list[str]) -> np.ndarray:
+            arr = np.array([[int(c) for c in s] for s in qbits], dtype=np.uint8)
+            return arr[:, :-1] ^ arr[:, 1:]
         
         def get_final_logical_state(final_state: np.ndarray) -> np.ndarray:
             # Count the number of '1's in final_state and take modulo 2, initial state parity will always be zero
@@ -89,26 +80,25 @@ class IBM_sampler:
         def extract_flip_matrix(shot_list: list[str], ancillas: int) -> np.ndarray:
             bit_array = np.array([[int(bit) for bit in shot] for shot in shot_list], dtype=np.uint8)
             T = bit_array.shape[1] // ancillas
-            mat = bit_array.reshape((-1, T, ancillas))
-            flips = mat[:, 1:, :] != mat[:, :-1, :]  # Shape: (num_shots, T-1, ancillas)
-            return flips.reshape((flips.shape[0], -1)) # Flatten time and ancilla dims for each shot → shape (num_shots, (T-1)*ancillas)
-        
-        initial_syndrome = [(str(self.job_params["initial_logical_state"])*self.job_params["ancillas"])]*self.job_params["shots"]
+            mat = bit_array.reshape(-1, T, ancillas)
+            flips = np.diff(mat, axis=1).astype(bool)
+            return flips.reshape(flips.shape[0], -1)
         
         syndrome_excluding_initial_final = result.data.syndrome.get_bitstrings()
         syndrome_excluding_initial_final = [s[::-1] for s in syndrome_excluding_initial_final] #Flip IBM data
         
         final_state = result.data.final_state.get_bitstrings()
         final_state = [s[::-1] for s in final_state] #Flip IBM data
-
         flips_array = get_final_logical_state(final_state)
 
-        final_symdrome = get_syndrome_from_qbits(final_state)
+        initial_syndrome = np.array([[int(bit) for bit in str(self.job_params["initial_logical_state"])*self.job_params["ancillas"]]] * self.job_params["shots"], dtype=np.uint8)
+        syndrome_excluding_initial_final = np.array([[int(c) for c in s] for s in syndrome_excluding_initial_final], dtype=np.uint8)
+        final_syndrome = get_syndrome_from_qbits(final_state)
 
-        syndrome = [initial_syndrome[i] + syndrome_excluding_initial_final[i] + final_symdrome[i] for i in range(self.job_params["shots"])]
+        syndrome = np.concatenate([initial_syndrome, syndrome_excluding_initial_final, final_syndrome], axis=1)
         syndrome = syndrome[:100]
-        ### CREATE NODES/DETECTION EVENTS
-        detector_events_list = extract_flip_matrix(syndrome, self.job_params["ancillas"])
+        
+        detector_events_list = extract_flip_matrix(syndrome, self.job_params["ancillas"]) # CREATE NODES/DETECTION EVENTS
 
         return detector_events_list, flips_array
 
