@@ -12,4 +12,5 @@ pymatching==2.2.1
 # --find-links https://data.pyg.org/whl/torch-2.5.1+cpu.html # Use this instead of above line if running on cpu.
 torch-cluster==1.6.3
 tqdm==4.67.1
-
+qiskit_ibm_runtime
+wandb

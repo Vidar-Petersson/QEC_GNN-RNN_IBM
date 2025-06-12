@@ -6,4 +6,4 @@
 #SBATCH --gpus-per-node=A40:1 # GPUs 64GB of RAM; cost factor 1.0
 
 # send script
-apptainer exec python_env.sif python src/train_nn.py
+apptainer exec bash_container.sif python examples/train_nn.py

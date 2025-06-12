@@ -1,1 +1,1 @@
-apptainer build python_env.sif python_env.def
+apptainer build bash_container.sif bash_container.def
