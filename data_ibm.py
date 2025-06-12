@@ -1,6 +1,5 @@
 import stim 
 import numpy as np
-import numpy.typing as npt
 import torch
 from tqdm import tqdm
 import time, itertools
@@ -34,7 +33,8 @@ class Dataset:
         self.t = args.t
         self.dt = args.dt 
         self.distance = args.distance
-        self.n_stabilizers = self.distance ** 2 - 1
+        # self.n_stabilizers = self.distance ** 2 - 1
+        self.n_stabilizers = self.distance - 1
         self.sliding = args.sliding
         self.k = args.k
         self.seed = args.seed
@@ -69,7 +69,10 @@ class Dataset:
         """
 
         # Generate all (error_rate, t) pairs to create one circuit per setting
-        combinations = itertools.product(self.error_rates, self.t)
+        if len(self.error_rates) > 1:
+            print("Warning: Multiple error rates have been entered! Will ignore.")
+            self.error_rates = [0.001]
+        combinations = list(itertools.product(self.error_rates, self.t))
 
         # Build one circuit per combination, with intermediate logical observables inserted
         self.circuits = [
@@ -86,22 +89,41 @@ class Dataset:
             circuit.compile_detector_sampler(seed=self.seed)
             for circuit in self.circuits
         ]
+        self.ibm_samplers = [
+            IBM_sampler(distance=self.distance, t=t )
+            for error_rate, t in combinations
+        ]
 
         # Precompute and store the physical detector coordinates for each circuit
         # These are used to map detection event indices into real space-time coordinates
         self.detector_coordinates = []
-        for circuit in self.circuits:
-            # Hardcoded to use "rotated_memory_x" regardless of self.code_task
+        for circ in self.circuits:
             detector_coordinate = stim.Circuit.generated(
-                code_task="surface_code:rotated_memory_x",  # NOTE: hardcoded
+                code_task="repetition_code:memory",
                 distance=self.distance,
-                rounds=self.t[0]
+                rounds=self.t[0]-1
             ).get_detector_coordinates()
 
-            # Convert from dict to array and rescale x, y by 1/2 (Stim convention)
-            detector_coordinate = np.array(list(detector_coordinate.values()))
-            detector_coordinate[:, :2] /= 2
-            self.detector_coordinates.append(detector_coordinate.astype(np.int64))
+            arr = np.array(list(detector_coordinate.values()))
+            arr[:, :1] /= 2
+            zeros = np.zeros((arr.shape[0], 1), dtype=arr.dtype)
+            arr = np.hstack((arr[:, :1], zeros, arr[:, 1:]))
+
+            # Spara som int64
+            self.detector_coordinates.append(arr.astype(np.int64))
+
+        # for circuit in self.circuits:
+        #     # Hardcoded to use "rotated_memory_x" regardless of self.code_task
+        #     detector_coordinate = stim.Circuit.generated(
+        #         code_task="surface_code:rotated_memory_x",  # NOTE: hardcoded
+        #         distance=self.distance,
+        #         rounds=self.t[0]
+        #     ).get_detector_coordinates()
+
+        #     # Convert from dict to array and rescale x, y by 1/2 (Stim convention)
+        #     detector_coordinate = np.array(list(detector_coordinate.values()))
+        #     detector_coordinate[:, :2] /= 2
+        #     self.detector_coordinates.append(detector_coordinate.astype(np.int64))
 
         # Build a mask that identifies where stabilizers are placed in the lattice
         # syndrome_x marks positions of X stabilizers (value 1)
@@ -113,7 +135,8 @@ class Dataset:
         syndrome_z = np.rot90(syndrome_x) * 3
 
         # The final syndrome mask distinguishes X (1) and Z (3) stabilizers
-        self.syndrome_mask = syndrome_x + syndrome_z
+        # self.syndrome_mask = syndrome_x + syndrome_z
+        self.syndrome_mask = np.ones((1, self.distance-1), dtype=np.uint8)
 
 
     def sample_syndromes(self, sampler_idx: int) -> tuple[np.ndarray, np.ndarray]:
@@ -145,17 +168,17 @@ class Dataset:
             steps'. This means, that there are g = t - dt + 2 chunks for each shot. 
         """
 
-        sampler = self.samplers[sampler_idx]
+        sampler = self.ibm_samplers[sampler_idx]
+        #sampler = self.samplers[sampler_idx]
         detection_events_list, observable_flips_list = [], []
         # Sample until we get a batch where each element has at least
         # one detection event. 
         while len(detection_events_list) < self.batch_size: 
             #detection_events, observable_flips = sampler.sample(shots=self.batch_size, separate_observables=True)
-            sampler = IBM_sampler(distance=3, t=5, batch_size=1000)
-            print("init")
             detection_events, observable_flips = sampler.load_jobdata()
+
             shots_w_flips = np.sum(detection_events, axis=1) != 0 # only include cases where there is at least one detection event.
-            detection_events_list.extend(detection_events[shots_w_flips, :])
+            detection_events_list.extend(detection_events[shots_w_flips, :]) #Onödigt eftersom vi generar allt på samma gång
             observable_flips_list.extend(observable_flips[shots_w_flips, :])
         detection_array = np.array(detection_events_list[:self.batch_size])
         flips_array = np.array(observable_flips_list[:self.batch_size], dtype=np.int32)
@@ -268,11 +291,11 @@ class Dataset:
 
         # Decode syndrome indices into (x, y, t) coordinates using precomputed Stim detector layout
         # Result: list of arrays, one per shot, each with shape [num_events_in_shot, 3]
-        node_features = [self.detector_coordinates[sampler_idx][s] for s in syndromes]
+        node_features = [self.detector_coordinates[sampler_idx][s] for s in syndromes] #
 
         if self.sliding:
             # Total number of rounds used in this circuit
-            sampler_t = self.circuits[sampler_idx].num_detectors // self.n_stabilizers
+            sampler_t = self.t[0] # self.circuits[sampler_idx].num_detectors // self.n_stabilizers
             # Apply a sliding window over time to divide events into overlapping chunks
             # Returns updated node_features with local time coordinates and chunk_labels
             node_features, chunk_labels = self.get_sliding_window(node_features, sampler_t)
@@ -285,7 +308,8 @@ class Dataset:
 
         # Combine all node features into a single array [total_nodes, 3]
         node_features = np.vstack(node_features)
-
+        
+    
         if not self.sliding:
             # If sliding window is not used, manually compute chunk index and local time:
             #   - chunk = t // dt
@@ -315,7 +339,7 @@ class Dataset:
 
         # Compute the distances between the nodes:
         delta = node_features[edge_index[1]] - node_features[edge_index[0]]
-        edge_attr = torch.linalg.norm(delta, ord=self.norm, dim=1)
+        edge_attr = torch.linalg.norm(delta, ord=self.norm, dim=1) # by default self.norm = torch.inf
 
         # Inverse square of the norm between two nodes.
         edge_attr = 1 / edge_attr ** 2
@@ -449,7 +473,7 @@ class Dataset:
         
         # Plotting edges.
         edge_coordinates = node_features[edges].T[:3]
-        plt.plot(*edge_coordinates, c="blue", alpha=0.3)
+        #plt.plot(*edge_coordinates, c="blue", alpha=0.3)
        
         # Plotting stabilizers.
         x_stabs = np.nonzero(self.syndrome_mask == 1)
@@ -460,10 +484,10 @@ class Dataset:
         plt.show()
         
 if __name__ == "__main__":
-    args = Args(error_rates=[0.002], t=[99], sliding=True, dt=8)
+    args = Args(error_rates=[0.002], t=[6], sliding=True, dt=2)
     dataset = Dataset(args)
     t0 = time.perf_counter()
-    node_features, edge_index, labels, label_map, edge_attr, flips = dataset.generate_batch()
+    node_features, edge_index, labels, label_map, edge_attr, aligned_flips, lengths, last_label = dataset.generate_batch()
     for i in tqdm(range(10)):
         dataset.plot_graph(node_features, edge_index, labels, i)
     print(f"{time.perf_counter() - t0:.3f} seconds")

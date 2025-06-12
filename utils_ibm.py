@@ -9,12 +9,11 @@ class IBM_sampler:
     """Class for loading detection_events and observable_flips from existing json data.
     If jobdata doesn't exists for the desired config, ask to generate it via IBM Quantum."""
     
-    def __init__(self, distance: int, t: int, batch_size: int):
+    def __init__(self, distance: int, t: int):
         self.job_dir = Path("./ibm_jobdata/")
         self.distance = distance 
         self.t = t
-        self.batch_size = batch_size
-        self.filename = self._find_filename(self.job_dir, self.distance, self.t)
+        self.filename = self._find_filename(self.job_dir, self.distance, self.t-1)
         self.job_params = self._get_job_params(self.filename)
         self.device = "cpu"
 
@@ -73,7 +72,7 @@ class IBM_sampler:
         def get_final_logical_state(final_state: np.ndarray) -> np.ndarray:
             # Count the number of '1's in final_state and take modulo 2, initial state parity will always be zero
             diff_parity = np.array([s.count("1") % 2 == 1 for s in final_state])
-            matrix = np.full((len(diff_parity), self.job_params["dt"]), False, dtype=bool) # Match dimensions of matrix from logical readings at all time steps
+            matrix = np.full((len(diff_parity), self.t), False, dtype=bool) # Match dimensions of matrix from logical readings at all time steps
             matrix[:, -1] = diff_parity
             return matrix
         
@@ -89,25 +88,22 @@ class IBM_sampler:
         
         final_state = result.data.final_state.get_bitstrings()
         final_state = [s[::-1] for s in final_state] #Flip IBM data
-        flips_array = get_final_logical_state(final_state)
+
 
         initial_syndrome = np.array([[int(bit) for bit in str(self.job_params["initial_logical_state"])*self.job_params["ancillas"]]] * self.job_params["shots"], dtype=np.uint8)
         syndrome_excluding_initial_final = np.array([[int(c) for c in s] for s in syndrome_excluding_initial_final], dtype=np.uint8)
         final_syndrome = get_syndrome_from_qbits(final_state)
 
         syndrome = np.concatenate([initial_syndrome, syndrome_excluding_initial_final, final_syndrome], axis=1)
-        syndrome = syndrome[:100]
         
         detector_events_list = extract_flip_matrix(syndrome, self.job_params["ancillas"]) # CREATE NODES/DETECTION EVENTS
+        flips_array = get_final_logical_state(final_state)
 
         return detector_events_list, flips_array
 
 
 if __name__ == "__main__":
-    # Directory containing your job files
-    job_dir = "jobs/training_data"
-
-    # Gather all files (adjust extension filter as needed)
-    job_files = ["training_data/"+f.split(".")[0] for f in os.listdir(job_dir) ]
+    sampler = IBM_sampler(distance=3, t=5)
+    detection_events, observable_flips = sampler.load_jobdata()
 
 
