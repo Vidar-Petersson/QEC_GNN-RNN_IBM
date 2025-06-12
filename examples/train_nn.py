@@ -10,11 +10,11 @@ import argparse
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument('--d', type=int, default=5)
-    parser.add_argument('--t', type=int, default=49)
+    parser.add_argument('--d', type=int, default=3)
+    parser.add_argument('--t', type=int, default=6)
     parser.add_argument('--dt', type=int, default=2)
-    parser.add_argument('--batch_size', type=int, default=2048)
-    parser.add_argument('--n_batches', type=int, default=256)
+    parser.add_argument('--batch_size', type=int, default=2048*5) #2048*256//10
+    parser.add_argument('--n_batches', type=int, default=1)
     parser.add_argument('--n_epochs', type=int, default=200)
     parser.add_argument('--load_path', type=str, default=None)
 

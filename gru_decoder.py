@@ -1,6 +1,6 @@
 import torch, time, os
 import torch.nn as nn 
-from data_stim import Dataset
+from data_ibm import Dataset
 from args import Args
 from utils import GraphConvLayer, TrainingLogger, group, standard_deviation
 from torch_geometric.nn import global_mean_pool
@@ -73,7 +73,7 @@ class GRUDecoder(nn.Module):
         best_model = self.state_dict()
 
         if self.args.log_wandb:
-            wandb.init(project="GNN-RNN-surface_code", name = save, config = self.args)
+            wandb.init(project="GNN-RNN-repetition-code", name = save, config = self.args)
 
         if local_log:
             logger.on_training_begin(self.args)
@@ -84,6 +84,12 @@ class GRUDecoder(nn.Module):
         schedule = lambda epoch: max(0.95 ** epoch, self.args.min_lr / self.args.lr)
         scheduler = LambdaLR(optim, lr_lambda=schedule)
         best_accuracy = 0
+
+        t0 = time.perf_counter() 
+        x, edge_index, batch_labels, label_map, edge_attr, aligned_flips, lengths, last_label = dataset.generate_batch()
+
+        t1 = time.perf_counter()
+        data_time = t1 - t0
         
         for i in range(1, self.args.n_epochs + 1):
             if local_log:
@@ -91,16 +97,16 @@ class GRUDecoder(nn.Module):
         
             epoch_loss = 0
             epoch_acc = 0
-            data_time = 0
+            #data_time = 0
             model_time = 0
+
+
         
             for _ in range(self.args.n_batches):
                 optim.zero_grad()
     
-                t0 = time.perf_counter() 
-                x, edge_index, batch_labels, label_map, edge_attr, aligned_flips, lengths, last_label = dataset.generate_batch()
-
                 t1 = time.perf_counter()
+
                 # Forward pass through the model
                 # out has shape [B, g_actual], where:
                 #   B = batch size
@@ -131,7 +137,7 @@ class GRUDecoder(nn.Module):
                 t2 = time.perf_counter()
                 
                 # Statistics
-                data_time += t1 - t0
+                
                 model_time += t2 - t1
                 epoch_loss += loss.item()
                 epoch_acc += (torch.sum(torch.round(final_prediction) == last_label) / torch.numel(last_label)).item()

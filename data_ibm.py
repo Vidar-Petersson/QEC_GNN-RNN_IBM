@@ -182,6 +182,22 @@ class Dataset:
             observable_flips_list.extend(observable_flips[shots_w_flips, :])
         detection_array = np.array(detection_events_list[:self.batch_size])
         flips_array = np.array(observable_flips_list[:self.batch_size], dtype=np.int32)
+
+        # len_graphs = len(graphs)
+        # len_train = int(len_graphs * split_ratio)
+        # len_test = len_graphs - len_train
+        
+        # graphs_train, graphs_test = None, None
+
+
+        # if len_train == 0: # If only train set is used, no split is needed
+        #     graphs_test = graphs
+        # else: # Else, split the data into train and test set
+        #     graphs_train, graphs_test = torch.utils.data.random_split(
+        #         graphs, [len_train, len_test],
+        #         generator=torch.Generator().manual_seed(42)
+        #     )
+
         return detection_array.astype(bool), flips_array
     
     def get_sliding_window(self, node_features: list[np.ndarray], sampler_t: int
