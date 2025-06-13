@@ -71,6 +71,7 @@ class IBM_sampler:
         
         def get_final_logical_state(final_state: np.ndarray) -> np.ndarray:
             # Count the number of '1's in final_state and take modulo 2, initial state parity will always be zero
+            diff_parity = np.array([s[0] == "1" for s in final_state])
             diff_parity = np.array([s.count("1") % 2 == 1 for s in final_state])
             matrix = np.full((len(diff_parity), self.t), False, dtype=bool) # Match dimensions of matrix from logical readings at all time steps
             matrix[:, -1] = diff_parity
