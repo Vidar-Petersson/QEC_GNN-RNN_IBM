@@ -1,14 +1,13 @@
 import json
 from qiskit import transpile, QuantumCircuit, QuantumRegister, ClassicalRegister
 from qiskit_aer import AerSimulator
-from qiskit_ibm_runtime.fake_provider import FakeMarrakesh
-from qiskit_ibm_runtime import RuntimeEncoder
+from qiskit_ibm_runtime import RuntimeEncoder, QiskitRuntimeService
 
 class QuantumErrorCorrectionSim:
     """
     Klass för att bygga och köra simulerade kvantfelkorrigeringskretsar med Qiskit Aer.
     """
-    def __init__(self, code_distance: str, time_steps: str, shots: str, initial_state: int = 0):
+    def __init__(self, code_distance: int, time_steps: int, shots: int, initial_state: int = 0):
         """
         Initierar systemets parametrar och simulatorn.
         
@@ -22,8 +21,11 @@ class QuantumErrorCorrectionSim:
         self.shots = shots
         self.initial_state = initial_state
         
-        self.device_backend = FakeMarrakesh()
-        self.simulator = AerSimulator.from_backend(self.device_backend)
+        # Ladda ner aktuell felfördelning
+        service = QiskitRuntimeService()
+        self.backend = service.backend("ibm_marrakesh")
+
+        print(f"Connected to: {self.backend.name}, d={code_distance}, t={time_steps}, shots={shots}")
         
         # Registrerar kvant- och klassiska bitar
         self.qreg_data = QuantumRegister(self.code_distance)  # Dataqubits
@@ -42,12 +44,11 @@ class QuantumErrorCorrectionSim:
         """ Initialiserar qubits i ett likformigt superpositionstillstånd och sammanflätar redundanta qubits. """
         if self.initial_state == 1:
             circuit.x(self.qreg_data)
-            
         circuit.h(self.qreg_data)
         circuit.barrier(self.qreg_data)
 
         for redundance in self.redundances_data:
-            circuit.cx(self.state_data, redundance)
+            circuit.cx(redundance, self.state_data)
         circuit.barrier(self.qreg_data, *self.qreg_ancillas)
         return circuit
     
@@ -68,7 +69,7 @@ class QuantumErrorCorrectionSim:
 
         circuit.h(self.qreg_ancillas)
         circuit.barrier(*self.qreg_data, *self.qreg_ancillas)
-        
+
         # Mätning av syndrombitar
         for i in range(self.code_distance - 1):
             circuit.measure(self.qreg_ancillas[i], self.creg_syndrome[offset + i])
@@ -76,8 +77,7 @@ class QuantumErrorCorrectionSim:
         
         # Reset av mätqubits för återanvändning
         for i in range(self.code_distance - 1):
-            with circuit.if_test((self.creg_syndrome[offset + i], 1)):
-                circuit.x(self.qreg_ancillas[i])
+            circuit.reset(self.qreg_ancillas[i])
         
         circuit.barrier(*self.qreg_data, *self.qreg_ancillas)
         return circuit
@@ -101,35 +101,21 @@ class QuantumErrorCorrectionSim:
     def execute(self) -> object:
         """ Kör kvantkretsen på Qiskit Aer backend och sparar resultatet. """
         circuit = self.build_error_correction_sequence()
+        transpiled = transpile(circuit, backend=self.backend, optimization_level=2, seed_transpiler=42)
 
-        # Kör på Qiskit Aer sampler
-        simulator = self.simulator
-        transpiled_circuit = transpile(circuit, simulator)
-        job = simulator.run([transpiled_circuit], shots=self.shots)
+        simulator = AerSimulator.from_backend(self.backend)
+        job = simulator.run(transpiled, shots=self.shots, seed_simulator=42)
         result = job.result()
-        counts = result.get_counts()
         
-        syndromes = []
-        final_states = []
-        for count in counts.keys():
-            split_count = count.split()
-            syndrome = split_count[0]
-            final_state = split_count[1]
-            for i in range(counts[count]):
-                syndromes.append(syndrome)
-                final_states.append(final_state)
-        return result, syndromes, final_states
+        filename = f"./aer_jobdata/{job.job_id()}_{self.code_distance}_{self.time_steps}_{self.shots}_{self.initial_state}.json"
+        with open(filename, "w") as file:
+            json.dump(result, file, cls=RuntimeEncoder)
+        
+        time = result.to_dict()["time_taken"]
+        print(f"Mätning sparad som '{filename}', sampling tog {time:.1f} s.")
+        # Aer's .result() methods returns the jobdata in a different format than SamplerV2. We need to format it as the experiemtal data later.
+
 
 if __name__ == "__main__":
-    qec = QuantumErrorCorrectionSim(code_distance=5, time_steps=12, shots=32000, initial_state=0)
-    result, syndromes, final_states = qec.execute()
-    
-    result_dict = result.to_dict()
-    result_dict['results'][0]['data']['syndrome'] = syndromes
-    result_dict['results'][0]['data']['final_state'] = final_states
-    
-    filename = f"./jobs/simulations/aer_{qec.code_distance}_{qec.time_steps}_{qec.shots}_{qec.initial_state}.json"
-    with open(filename, "w") as file:
-        json.dump(result_dict, file, cls=RuntimeEncoder)
-    
-    print(f"Output sparad som '{filename}'.")
+    qec = QuantumErrorCorrectionSim(code_distance=3, time_steps=5, shots=2_000_000, initial_state=0)
+    result = qec.execute()
