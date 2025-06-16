@@ -97,11 +97,28 @@ class QuantumErrorCorrectionSim:
             circuit = self.measure_syndrome_bit(circuit, offset=(self.code_distance - 1) * i)
         circuit = self.apply_final_readout(circuit) # Mät anchillabitarna
         return circuit
+    
+    def optimize_circuit(self, circuit: QuantumCircuit) -> QuantumCircuit:
+        """TODO: Choose which physical qubits to sample from. By default from qubit #0. """
+        # layout = {self.qreg_data[i]: i+6 for i in range(self.code_distance)}
+        # ancilla_offset = self.code_distance
+        # for i in range(self.num_qubits - self.code_distance):
+        #     layout[self.qreg_ancillas[i]] = ancilla_offset + i +6
+
+        # transpiled = transpile(circuit, backend=self.backend,
+        #                     #initial_layout=layout,
+        #                     optimization_level=2,
+        #                     seed_transpiler=42)
+        # return transpiled
+
+        """ Optimerar kretsen för att minska antalet grindar. """
+        transpiled = transpile(circuit, backend=self.backend, optimization_level=2, seed_transpiler=42)
+        return transpiled
 
     def execute(self) -> object:
         """ Kör kvantkretsen på Qiskit Aer backend och sparar resultatet. """
         circuit = self.build_error_correction_sequence()
-        transpiled = transpile(circuit, backend=self.backend, optimization_level=2, seed_transpiler=42)
+        transpiled = self.optimize_circuit(circuit)
 
         simulator = AerSimulator.from_backend(self.backend)
         job = simulator.run(transpiled, shots=self.shots, seed_simulator=42)
