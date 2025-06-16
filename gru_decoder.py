@@ -162,7 +162,7 @@ class GRUDecoder(nn.Module):
                 if save:
                     os.makedirs("./models", exist_ok=True)
                     torch.save(self.state_dict(), f"./models/{save}.pt")
-                    wandb.save(self.state_dict())
+                    #wandb.save(self.state_dict()) # TODO: fix that wandb saves to wandb.ai
         
             scheduler.step()
             

@@ -6,12 +6,12 @@ from repetition_code.repetition_code import QuantumErrorCorrection
 
 
 def run_qec_job(code_distance, time_steps):
-    qec = QuantumErrorCorrection(code_distance=code_distance, time_steps=time_steps, shots=20000, initial_state=0, simulator=True)
+    qec = QuantumErrorCorrection(code_distance=code_distance, time_steps=time_steps, shots=200000, initial_state=0, simulator=True)
     #return qec.execute_batch(repetitions=2)
     return qec.execute()
 
 code_distances = [3]
-time_steps_list = [13]
+time_steps_list = [100]
 
 # Lista med förbjudna kombinationer
 excluded_combinations = {} #{(5, 5), (3,5),(3,3), (9,3), (7,7), (5,9), (9,5), (9, 9), (13,13), (9,13)}  # Lägg till fler om du vill

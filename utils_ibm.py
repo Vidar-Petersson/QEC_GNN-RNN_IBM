@@ -73,7 +73,7 @@ class IBM_sampler:
         
         def get_final_logical_state(final_state: np.ndarray) -> np.ndarray:
             diff_parity = np.array([s[0] == "1" for s in final_state]) # 0/1 klassning
-            #diff_parity = np.array([s.count("1") % 2 == 1 for s in final_state]) # Jämn/udda klassning 
+            # diff_parity = np.array([s.count("1") % 2 == 1 for s in final_state]) # Jämn/udda klassning 
             matrix = np.full((len(diff_parity), self.t), False, dtype=bool) # Match dimensions of matrix from logical readings at all time steps
             matrix[:, -1] = diff_parity
             return matrix

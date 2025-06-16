@@ -176,5 +176,5 @@ class QuantumErrorCorrection:
         return results
 
 if __name__ == "__main__":
-    qec = QuantumErrorCorrection(code_distance=3, time_steps=5, shots=20000, initial_state=0, simulator=True)
+    qec = QuantumErrorCorrection(code_distance=3, time_steps=100, shots=200000, initial_state=0, simulator=True)
     qec.execute()
