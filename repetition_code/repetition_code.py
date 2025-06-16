@@ -1,14 +1,13 @@
 import json
 from qiskit import transpile, QuantumCircuit, QuantumRegister, ClassicalRegister
 from qiskit_ibm_runtime import QiskitRuntimeService, RuntimeEncoder, SamplerV2 as Sampler, Batch
-from concurrent.futures import ThreadPoolExecutor, as_completed
-from itertools import product
+from qiskit_aer import AerSimulator
 
 class QuantumErrorCorrection:
     """
-    Klass för att bygga och köra kvantfelkorrigeringskretsar med Qiskit.
+    Klass för att bygga och köra kvantfelkorrigeringskretsar med Qiskit, både experimentellt och simulerat.
     """
-    def __init__(self, code_distance: str, time_steps: str, shots: str, initial_state: int = 0):
+    def __init__(self, code_distance: int, time_steps: int, shots: int, initial_state: int, simulator: bool):
         """
         Initierar systemets parametrar och ansluter till en backend.
         
@@ -21,10 +20,10 @@ class QuantumErrorCorrection:
         self.time_steps = time_steps
         self.shots = shots
         self.initial_state = initial_state
+        self.simulator = simulator
 
         self.service = QiskitRuntimeService()
-        #self.backend = self.service.least_busy(operational=True, simulator=False, min_num_qubits=self.num_qubits)
-        self.backend = self.service.backend("ibm_marrakesh")
+        self.backend = self.service.backend("ibm_marrakesh") # Specify backend
         print("Connected to:", self.backend, "with distance:", self.code_distance, ", time: ", self.time_steps)
         
         # Registrerar kvant- och klassiska bitar
@@ -99,18 +98,17 @@ class QuantumErrorCorrection:
         return circuit
     
     def optimize_circuit(self, circuit: QuantumCircuit) -> QuantumCircuit:
+        # # Exempel: välj fysiska kvantbitar (måste passa maskinen!)
+        # layout = {self.qreg_data[i]: i+6 for i in range(self.code_distance)}
+        # ancilla_offset = self.code_distance
+        # for i in range(self.num_qubits - self.code_distance):
+        #     layout[self.qreg_ancillas[i]] = ancilla_offset + i +6
 
-        # Exempel: välj fysiska kvantbitar (måste passa maskinen!)
-        layout = {self.qreg_data[i]: i+6 for i in range(self.code_distance)}
-        ancilla_offset = self.code_distance
-        for i in range(self.num_qubits - self.code_distance):
-            layout[self.qreg_ancillas[i]] = ancilla_offset + i +6
-
-        transpiled = transpile(circuit, backend=self.backend,
-                            #initial_layout=layout,
-                            optimization_level=2,
-                            seed_transpiler=42)
-        return transpiled
+        # transpiled = transpile(circuit, backend=self.backend,
+        #                     #initial_layout=layout,
+        #                     optimization_level=2,
+        #                     seed_transpiler=42)
+        # return transpiled
 
         """ Optimerar kretsen för att minska antalet grindar. """
         transpiled = transpile(circuit, backend=self.backend, optimization_level=2, seed_transpiler=42)
@@ -119,18 +117,30 @@ class QuantumErrorCorrection:
     def execute(self) -> object:
         """ Kör kvantkretsen på backend och sparar resultatet. """
         circuit = self.build_error_correction_sequence()
-        optimized_circuit = self.optimize_circuit(circuit)
+        transpiled_circuit = self.optimize_circuit(circuit)
 
-        # Kör på riktig IBM-backend
-        sampler = Sampler(self.backend)
-        job = sampler.run([optimized_circuit], shots=self.shots)
-        result = job.result()
-        filename = f"./jobs/small_jobs/{job.job_id()}_{self.code_distance}_{self.time_steps}_{self.shots}_{self.initial_state}.json"
+        if self.simulator:
+            simulator = AerSimulator.from_backend(self.backend)
+            job = simulator.run(transpiled_circuit, shots=self.shots, seed_simulator=42)
+            result = job.result()
+            
+            filename = f"./jobdata/aer/{job.job_id()}_{self.code_distance}_{self.time_steps}_{self.shots}_{self.initial_state}.json"
+            with open(filename, "w") as file:
+                json.dump(result, file, cls=RuntimeEncoder)
+            
+            time = result.to_dict()["time_taken"]
+            print(f"Mätning sparad som '{filename}', simulerad sampling tog {time:.1f} s.")
+        else:
+            # Kör på riktig IBM-backend
+            sampler = Sampler(self.backend)
+            job = sampler.run(transpiled_circuit, shots=self.shots)
+            result = job.result()
+            filename = f"./jobdata/ibm/{job.job_id()}_{self.code_distance}_{self.time_steps}_{self.shots}_{self.initial_state}.json"
 
-        with open(filename, "w") as file:
-            json.dump(result, file, cls=RuntimeEncoder)
-        
-        print(f"Output sparad som '{filename}'.")
+            with open(filename, "w") as file:
+                json.dump(result, file, cls=RuntimeEncoder)
+            
+            print(f"Mätning sparad som '{filename}'.")
         return result
 
     def execute_batch(self, repetitions: int = 5) -> list:
@@ -141,7 +151,7 @@ class QuantumErrorCorrection:
         :return: Lista med resultatobjekt
         """
         circuit = self.build_error_correction_sequence()
-        optimized_circuit = self.optimize_circuit(circuit)
+        transpiled_circuit = self.optimize_circuit(circuit)
 
         results = []
         backend = self.backend
@@ -151,7 +161,7 @@ class QuantumErrorCorrection:
             jobs = []
 
             for i in range(repetitions):
-                job = sampler.run([optimized_circuit], shots=self.shots)
+                job = sampler.run(transpiled_circuit, shots=self.shots)
                 jobs.append((i, job))  # Spara med index
 
             # Hämta resultat efteråt
@@ -165,32 +175,6 @@ class QuantumErrorCorrection:
         
         return results
 
-def run_qec_job(code_distance, time_steps):
-    qec = QuantumErrorCorrection(code_distance=code_distance, time_steps=time_steps, shots=20000, initial_state=0)
-    #return qec.execute_batch(repetitions=2)
-    return qec.execute()
-
 if __name__ == "__main__":
-    code_distances = [3]
-    time_steps_list = [13]
-
-    # Lista med förbjudna kombinationer
-    excluded_combinations = {} #{(5, 5), (3,5),(3,3), (9,3), (7,7), (5,9), (9,5), (9, 9), (13,13), (9,13)}  # Lägg till fler om du vill
-
-    # Skapa alla tillåtna kombinationer
-    parameter_combinations = [
-        (d, t) for d, t in product(code_distances, time_steps_list)
-        if (d, t) not in excluded_combinations
-    ]
-
-    with ThreadPoolExecutor(max_workers=len(parameter_combinations)) as executor:
-        futures = {
-            executor.submit(run_qec_job, d, t): (d, t) for d, t in parameter_combinations
-        }
-        for future in as_completed(futures):
-            d, t = futures[future]
-            try:
-                result = future.result()
-                print(f"Klar: code_distance={d}, time_steps={t}")
-            except Exception as e:
-                print(f"Fel: code_distance={d}, time_steps={t}: {e}")
+    qec = QuantumErrorCorrection(code_distance=3, time_steps=5, shots=20000, initial_state=0, simulator=True)
+    qec.execute()

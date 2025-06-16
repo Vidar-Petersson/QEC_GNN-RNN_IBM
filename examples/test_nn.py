@@ -30,12 +30,11 @@ if __name__ == "__main__":
     )
 
     decoder = GRUDecoder(args)
-    decoder.load_state_dict(torch.load("./models/train_final_t_d3_t6_dt2_250612_122133.pt", weights_only=True, map_location=args.device))
-    # decoder.load_state_dict(torch.load("./models/d3_t49_dt2_250528_152916.pt", weights_only=True, map_location=args.device))
+    decoder.load_state_dict(torch.load("./models/train_final_t_d3_t6_dt2_250612_162334.pt", weights_only=True, map_location=args.device))
     n_iter = args_cli.n_iter
     decoder.to(args.device)  # Move model to MPS or appropriate device
     accuracies = []
-    for t in [6]:#, 14, 24]:#, 49, 74, 99, 249, 499, 749, 999]:
+    for t in [14]:#, 14, 24]:#, 49, 74, 99, 249, 499, 749, 999]:
         print('Starting with t=',t)
         args = Args(
             distance=args_cli.d,
@@ -50,7 +49,6 @@ if __name__ == "__main__":
             seed=42 
         )
         acc, std = decoder.test_model(Dataset(args), n_iter=n_iter)
-        #acc, std = test_mwpm(Dataset(args), n_iter=n_iter)
         accuracies.append(acc)
         print(t, acc)
     print(accuracies)

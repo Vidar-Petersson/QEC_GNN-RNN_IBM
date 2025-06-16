@@ -90,7 +90,7 @@ class Dataset:
             for circuit in self.circuits
         ]
         self.ibm_samplers = [
-            IBM_sampler(distance=self.distance, t=t )
+            IBM_sampler(distance=self.distance, t=t, simulated=True) # Ändra så att det beror på förträning eller ej
             for error_rate, t in combinations
         ]
 

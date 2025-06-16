@@ -9,21 +9,27 @@ class IBM_sampler:
     """Class for loading detection_events and observable_flips from existing json data.
     If jobdata doesn't exists for the desired config, ask to generate it via IBM Quantum."""
     
-    def __init__(self, distance: int, t: int):
-        self.job_dir = Path("./ibm_jobdata/")
+    def __init__(self, distance: int, t: int, simulated=False):
+        self.simulated = simulated
         self.distance = distance 
         self.t = t
-        self.filename = self._find_filename(self.job_dir, self.distance, self.t-1)
+        self.job_dir, self.filename = self._find_filename(self.simulated, self.distance, self.t-1)
         self.job_params = self._get_job_params(self.filename)
         self.device = "cpu"
 
+
     @staticmethod
-    def _find_filename(job_dir: str, d: int, t: int) -> str:
+    def _find_filename(simulated: bool, d: int, t: int) -> str:
         """Find the filename in the given directory that matches the pattern _<d>_<t>_"""
+        if simulated:
+            job_dir = Path("./jobdata/aer/")
+        else:
+            job_dir = Path("./jobdata/ibm")
+
         pattern = re.compile(rf"_({d})_({t})_")
         for filename in os.listdir(job_dir):
             if pattern.search(filename):
-                return filename
+                return job_dir, filename
         raise FileNotFoundError(f"No file found in '{job_dir}' with pattern '_{d}_{t}_'")
 
     @staticmethod
@@ -59,10 +65,6 @@ class IBM_sampler:
         Returns:
         data -- pythorch dataset with graphs and correct labels with correct format for GNN-network
         """
-        job = self.job_dir / self.filename
-        result = None
-        with open(job) as f:
-            result = json.load(f,cls=RuntimeDecoder)[0]
 
         ### EXTRACT SYNDROME
         def get_syndrome_from_qbits(qbits: list[str]) -> np.ndarray:
@@ -70,9 +72,8 @@ class IBM_sampler:
             return arr[:, :-1] ^ arr[:, 1:]
         
         def get_final_logical_state(final_state: np.ndarray) -> np.ndarray:
-            # Count the number of '1's in final_state and take modulo 2, initial state parity will always be zero
-            diff_parity = np.array([s[0] == "1" for s in final_state])
-            diff_parity = np.array([s.count("1") % 2 == 1 for s in final_state])
+            diff_parity = np.array([s[0] == "1" for s in final_state]) # 0/1 klassning
+            #diff_parity = np.array([s.count("1") % 2 == 1 for s in final_state]) # Jämn/udda klassning 
             matrix = np.full((len(diff_parity), self.t), False, dtype=bool) # Match dimensions of matrix from logical readings at all time steps
             matrix[:, -1] = diff_parity
             return matrix
@@ -84,12 +85,31 @@ class IBM_sampler:
             flips = np.diff(mat, axis=1).astype(bool)
             return flips.reshape(flips.shape[0], -1)
         
-        syndrome_excluding_initial_final = result.data.syndrome.get_bitstrings()
-        syndrome_excluding_initial_final = [s[::-1] for s in syndrome_excluding_initial_final] #Flip IBM data
-        
-        final_state = result.data.final_state.get_bitstrings()
-        final_state = [s[::-1] for s in final_state] #Flip IBM data
+        def extract_jobdata(simulated: bool) -> tuple[list, list]:
+            job = self.job_dir / self.filename
 
+            if simulated:
+                with open(job) as f:
+                    result = json.load(f,cls=RuntimeDecoder)
+                    counts = result.get_counts()
+                    syndrome_excluding_initial_final = []
+                    final_state = []
+                    for bitstring, freq in counts.items():
+                        syndromes, final_states = bitstring.split()
+                        syndrome_excluding_initial_final.extend([syndromes] * freq)
+                        final_state.extend([final_states] * freq)
+            else:
+                result = None
+                with open(job) as f:
+                    result = json.load(f,cls=RuntimeDecoder)[0]
+                syndrome_excluding_initial_final = result.data.syndrome.get_bitstrings()
+                final_state = result.data.final_state.get_bitstrings()
+
+            return syndrome_excluding_initial_final, final_state
+        
+        syndrome_excluding_initial_final, final_state = extract_jobdata(self.simulated)
+        syndrome_excluding_initial_final = [s[::-1] for s in syndrome_excluding_initial_final] #Flip IBM data
+        final_state = [s[::-1] for s in final_state] #Flip IBM data
 
         initial_syndrome = np.array([[int(bit) for bit in str(self.job_params["initial_logical_state"])*self.job_params["ancillas"]]] * self.job_params["shots"], dtype=np.uint8)
         syndrome_excluding_initial_final = np.array([[int(c) for c in s] for s in syndrome_excluding_initial_final], dtype=np.uint8)
@@ -102,9 +122,6 @@ class IBM_sampler:
 
         return detector_events_list, flips_array
 
-
 if __name__ == "__main__":
-    sampler = IBM_sampler(distance=3, t=5)
+    sampler = IBM_sampler(distance=3, t=6, simulated=False)
     detection_events, observable_flips = sampler.load_jobdata()
-
-
