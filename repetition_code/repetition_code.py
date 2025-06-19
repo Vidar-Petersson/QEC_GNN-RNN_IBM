@@ -24,12 +24,13 @@ class QuantumErrorCorrection:
 
         self.service = QiskitRuntimeService()
         self.backend = self.service.backend("ibm_marrakesh") # Specify backend
-        print("Connected to:", self.backend, "with distance:", self.code_distance, ", time: ", self.time_steps)
+        print("Connected to:", self.backend.name, "with distance:", self.code_distance, ", repetitions: ", self.time_steps)
         
         # Registrerar kvant- och klassiska bitar
         self.qreg_data = QuantumRegister(self.code_distance)  # Dataqubits
         self.qreg_ancillas = QuantumRegister(self.num_qubits - self.code_distance)  # Mätqubits
-        self.creg_syndrome = ClassicalRegister(self.time_steps * (self.code_distance - 1), name="syndrome") # Klassiska bitar för syndromdata
+        self.creg_syndromes = ClassicalRegister(self.time_steps * (self.code_distance - 1), name="syndromes") # Klassiska bitar för syndromdata
+        self.creg_middle_states = ClassicalRegister(self.time_steps, name="middle_states") # Klassiska bitar för syndromdata
         self.creg_final_state = ClassicalRegister(self.code_distance, name="final_state")  # Klassiska bitar för mätdata
         
         self.state_data = self.qreg_data[0]  # Initialtillstånd
@@ -37,7 +38,7 @@ class QuantumErrorCorrection:
     
     def build_qc(self) -> QuantumCircuit:
         """ Skapar en kvantkrets med registrerade qubits. """
-        return QuantumCircuit(self.qreg_data, self.qreg_ancillas, self.creg_final_state, self.creg_syndrome)
+        return QuantumCircuit(self.qreg_data, self.qreg_ancillas, self.creg_syndromes, self.creg_middle_states, self.creg_final_state)
     
     def initialize_qubits(self, circuit: QuantumCircuit) -> QuantumCircuit:
         """ Initialiserar qubits i ett likformigt superpositionstillstånd och sammanflätar redundanta qubits. """
@@ -51,7 +52,7 @@ class QuantumErrorCorrection:
         circuit.barrier(self.qreg_data, *self.qreg_ancillas)
         return circuit
     
-    def measure_syndrome_bit(self, circuit: QuantumCircuit, offset: int) -> QuantumCircuit:
+    def measure_syndrome_bit(self, circuit: QuantumCircuit, time_repetition_idx: int) -> QuantumCircuit:
         """
         Mäter syndrombitar genom att beräkna paritet för intilliggande qubits och lagra resultaten i klassiska bitar.
         
@@ -69,11 +70,18 @@ class QuantumErrorCorrection:
         circuit.h(self.qreg_ancillas)
         circuit.barrier(*self.qreg_data, *self.qreg_ancillas)
 
+        offset = (self.code_distance - 1) * time_repetition_idx # Skapa offset för syndrommätningarna
+
         # Mätning av syndrombitar
         for i in range(self.code_distance - 1):
-            circuit.measure(self.qreg_ancillas[i], self.creg_syndrome[offset + i])
+            circuit.measure(self.qreg_ancillas[i], self.creg_syndromes[offset + i])
         circuit.barrier(*self.qreg_data, *self.qreg_ancillas)
-        
+
+        # Mätning av första kvantbiten för logisk flagga
+        circuit.h(self.qreg_data[0])
+        circuit.measure(self.qreg_data[0], self.creg_middle_states[time_repetition_idx])
+        circuit.h(self.qreg_data[0])
+
         # Reset av mätqubits för återanvändning
         for i in range(self.code_distance - 1):
             circuit.reset(self.qreg_ancillas[i])
@@ -93,7 +101,7 @@ class QuantumErrorCorrection:
         circuit = self.build_qc() # Skapar alla klassiska och kvantbitar
         circuit = self.initialize_qubits(circuit) # Initialiserar bitarna superposition+sammanflätning
         for i in range(self.time_steps): # Gör syndrommätningarna
-            circuit = self.measure_syndrome_bit(circuit, offset=(self.code_distance - 1) * i)
+            circuit = self.measure_syndrome_bit(circuit, time_repetition_idx=i)
         circuit = self.apply_final_readout(circuit) # Mät anchillabitarna
         return circuit
     
@@ -176,5 +184,5 @@ class QuantumErrorCorrection:
         return results
 
 if __name__ == "__main__":
-    qec = QuantumErrorCorrection(code_distance=3, time_steps=100, shots=200000, initial_state=0, simulator=True)
+    qec = QuantumErrorCorrection(code_distance=3, time_steps=5, shots=1000, initial_state=0, simulator=True)
     qec.execute()
