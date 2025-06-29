@@ -4,16 +4,16 @@ import torch
 @dataclass
 class Args:
 
-    # Stim 
-    error_rates: list[float] = field(default_factory=lambda: [0.001, 0.002, 0.003, 0.004, 0.005])
-    t: list[int] = field(default_factory=lambda: [99])
+    # Repetition code data 
+    error_rates: list[float] = field(default_factory=lambda: [0.001, 0.002, 0.003, 0.004, 0.005]) # Only applicable for stim
+    t: list[int] = field(default_factory=lambda: [99]) # Perhaps change from list to int datatype
     dt: int = 2
-    distance: int = 5
+    distance: int = 3
     sliding: bool = True
     k: int = 20
     seed: int | None = None
     norm: float | int = torch.inf
-    train_all_times: bool = True
+    train_all_times: bool = True # Evaluate if working correctly
 
     # Torch
     device: torch.device = field(
@@ -23,7 +23,7 @@ class Args:
         "cpu"
     ))
     batch_size: int = 2048
-    n_batches: int = 256
+    n_batches: int = 256 # Should be dynamic and depend on the number of shots in job
     n_epochs: int = 600
     lr: float = 1e-3
     min_lr: float = 1e-4
@@ -32,4 +32,8 @@ class Args:
     embedding_features: list = field(default_factory=lambda: [5, 32, 64, 128, 256])
     hidden_size: int = 128 
     n_gru_layers: int = 4
+
+    # Training
+    training_split: float = 0.9 # Portion of data used in training
+    pre_train: bool = False # If simulated data should be used for pre-training network
     log_wandb: bool = False
