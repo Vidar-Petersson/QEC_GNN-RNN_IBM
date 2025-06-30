@@ -9,8 +9,8 @@ from qiskit_ibm_runtime import RuntimeDecoder
 
 class IBMSampler:
     """
-    Loads detection events and logical flip outcomes from IBM or simulated JSON job data.
-    Works with either experimental or simulated (Aer) data.
+    Loads detection events and logical flip outcomes from IBM or simulator JSON job data.
+    Works with either experimental or simulator (Aer) data.
     """
 
     def __init__(self, distance: int, t: int, simulator: bool = False):
@@ -20,9 +20,9 @@ class IBMSampler:
         Args:
             distance (int): Code distance (d) of the QEC code.
             t (int): Number of time steps.
-            simulated (bool): Whether to use simulated (Aer) or real IBM data.
+            simulator (bool): Whether to use simulator (Aer) or real IBM data.
         """
-        self.simulated = simulator
+        self.simulator = simulator
         self.distance = distance
         self.t = t
 
@@ -119,7 +119,7 @@ class IBMSampler:
         Returns:
             np.ndarray: Final syndrome bits, shape (shots, ancillas)
         """
-        arr = np.array([[int(c) for c in s] for s in states], dtype=np.uint8)
+        arr = self._bitstrings_to_array(states)
         return arr[:, :-1] ^ arr[:, 1:]
 
     def _get_syndrome_matrix(self, syndromes: List[str], final_state: List[str]) -> np.ndarray:
@@ -134,7 +134,7 @@ class IBMSampler:
         init_bit = str(self.job_params["initial_logical_state"])
         initial_syndrome = np.full((shots, ancillas), int(init_bit), dtype=np.uint8)
 
-        mid_syndrome = np.array([[int(b) for b in s] for s in syndromes], dtype=np.uint8)
+        mid_syndrome = self._bitstrings_to_array(syndromes)
         final_syndrome = self._compute_syndrome_differences(final_state)
 
         return np.concatenate([initial_syndrome, mid_syndrome, final_syndrome], axis=1)
@@ -160,11 +160,9 @@ class IBMSampler:
             np.ndarray: Boolean array of shape (shots, t), with flip at last time step.
         """
         logical_states = [a + b for a, b in zip(middle_states, [s[0] for s in final_state])]
-        matrix = np.array([
-            np.maximum.accumulate(np.fromiter(s, dtype=int)).astype(bool) # Consider changing to current label
-            for s in logical_states
-        ])
-        return matrix
+        arr = self._bitstrings_to_array(logical_states)
+        logical_flips =  np.cumsum(arr, axis=1) > 0
+        return logical_flips
 
     def load_jobdata(self) -> Tuple[np.ndarray, np.ndarray]:
         """
@@ -179,6 +177,10 @@ class IBMSampler:
         logical_flips = self._extract_logical_flips(middle_states, final_state)
 
         return detection_events, logical_flips
+    
+    @staticmethod
+    def _bitstrings_to_array(bitstrings: List[str]) -> np.ndarray:
+        return np.frombuffer(''.join(bitstrings).encode(), dtype='S1').view(np.uint8).reshape(len(bitstrings), -1) - ord('0')
 
 
 if __name__ == "__main__":
