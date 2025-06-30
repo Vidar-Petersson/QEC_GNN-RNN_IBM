@@ -13,7 +13,7 @@ class IBMSampler:
     Works with either experimental or simulated (Aer) data.
     """
 
-    def __init__(self, distance: int, t: int, simulated: bool = False):
+    def __init__(self, distance: int, t: int, simulator: bool = False):
         """
         Initialize the sampler.
 
@@ -22,7 +22,7 @@ class IBMSampler:
             t (int): Number of time steps.
             simulated (bool): Whether to use simulated (Aer) or real IBM data.
         """
-        self.simulated = simulated
+        self.simulated = simulator
         self.distance = distance
         self.t = t
 
@@ -39,7 +39,7 @@ class IBMSampler:
         Raises:
             FileNotFoundError: If no matching file is found.
         """
-        job_dir = Path("./jobdata/aer") if self.simulated else Path("./jobdata/ibm")
+        job_dir = Path("./jobdata/aer") if self.simulator else Path("./jobdata/ibm")
         pattern = re.compile(rf"_({self.distance})_({self.t - 1})_")
 
         for filename in os.listdir(job_dir):
@@ -88,7 +88,7 @@ class IBMSampler:
         with open(job_path) as f:
             data = json.load(f, cls=RuntimeDecoder)
 
-        if self.simulated:
+        if self.simulator:
             counts = data.get_counts()
             syndromes, middle_states, final_state = [], [], []
             for bitstring, freq in counts.items():
@@ -109,6 +109,19 @@ class IBMSampler:
 
         return syndromes, middle_states, final_state
 
+    def _compute_syndrome_differences(self, states: List[str]) -> np.ndarray:
+        """
+        Computes the parity difference between time t-1 and t.
+
+        Args:
+            states (List[str]): Final logical state bitstrings.
+
+        Returns:
+            np.ndarray: Final syndrome bits, shape (shots, ancillas)
+        """
+        arr = np.array([[int(c) for c in s] for s in states], dtype=np.uint8)
+        return arr[:, :-1] ^ arr[:, 1:]
+
     def _get_syndrome_matrix(self, syndromes: List[str], final_state: List[str]) -> np.ndarray:
         """
         Builds the full syndrome matrix including initial and final logical readings.
@@ -125,19 +138,6 @@ class IBMSampler:
         final_syndrome = self._compute_syndrome_differences(final_state)
 
         return np.concatenate([initial_syndrome, mid_syndrome, final_syndrome], axis=1)
-
-    def _compute_syndrome_differences(self, states: List[str]) -> np.ndarray:
-        """
-        Computes the parity difference between time t-1 and t.
-
-        Args:
-            states (List[str]): Final logical state bitstrings.
-
-        Returns:
-            np.ndarray: Final syndrome bits, shape (shots, ancillas)
-        """
-        arr = np.array([[int(c) for c in s] for s in states], dtype=np.uint8)
-        return arr[:, :-1] ^ arr[:, 1:]
 
     def _extract_detection_events(self, syndrome: np.ndarray) -> np.ndarray:
         """
@@ -160,10 +160,10 @@ class IBMSampler:
             np.ndarray: Boolean array of shape (shots, t), with flip at last time step.
         """
         logical_states = [a + b for a, b in zip(middle_states, [s[0] for s in final_state])]
-        matrix = [
-            np.maximum.accumulate(np.fromiter(s, dtype=int)).astype(bool)
+        matrix = np.array([
+            np.maximum.accumulate(np.fromiter(s, dtype=int)).astype(bool) # Consider changing to current label
             for s in logical_states
-        ]
+        ])
         return matrix
 
     def load_jobdata(self) -> Tuple[np.ndarray, np.ndarray]:
@@ -182,7 +182,7 @@ class IBMSampler:
 
 
 if __name__ == "__main__":
-    sampler = IBMSampler(distance=3, t=6, simulated=False)
+    sampler = IBMSampler(distance=3, t=6, simulator=True)
     detection_events, observable_flips = sampler.load_jobdata()
 
     print("Detection events shape:", detection_events.shape)
