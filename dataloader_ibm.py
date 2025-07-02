@@ -16,7 +16,6 @@ class IBMSampler:
     def __init__(self, distance: int, t: int, simulator: bool = False):
         """
         Initialize the sampler.
-
         Args:
             distance (int): Code distance (d) of the QEC code.
             t (int): Number of time steps.
@@ -32,10 +31,8 @@ class IBMSampler:
     def _find_filename(self) -> Tuple[Path, str]:
         """
         Finds a job file that matches the code distance and time steps.
-
         Returns:
             Tuple[Path, str]: The job directory and matching filename.
-
         Raises:
             FileNotFoundError: If no matching file is found.
         """
@@ -53,10 +50,8 @@ class IBMSampler:
     def _parse_job_params(self, filename: str) -> dict:
         """
         Parses job parameters from the filename.
-
         Args:
             filename (str): Job filename.
-
         Returns:
             dict: Parsed job parameters.
         """
@@ -79,7 +74,6 @@ class IBMSampler:
     def _load_json(self) -> Tuple[List[str], List[str]]:
         """
         Loads syndrome and final logical state data from JSON file.
-
         Returns:
             Tuple[List[str], List[str]]: (syndrome bitstrings, final state bitstrings)
         """
@@ -99,12 +93,17 @@ class IBMSampler:
         else:
             data = data[0]  # Experimental jobs are returned as a list
             syndromes = data.data.syndrome.get_bitstrings()
-            middle_states = data.data.middle_states.get_bitstrings()
+            if hasattr(data.data, "middle_states"):
+                middle_states = data.data.middle_states.get_bitstrings()
+            else:
+                middle_states = None
+                print("Warning: Jobdata doesn't include middle_states!")
             final_state = data.data.final_state.get_bitstrings()
 
         # Reverse bit order to match IBM's convention
         syndromes = [s[::-1] for s in syndromes]
-        middle_states = [s[::-1] for s in middle_states]
+        if middle_states is not None:
+            middle_states = [s[::-1] for s in middle_states]
         final_state = [s[::-1] for s in final_state]
 
         return syndromes, middle_states, final_state
@@ -112,10 +111,8 @@ class IBMSampler:
     def _compute_syndrome_differences(self, states: List[str]) -> np.ndarray:
         """
         Computes the parity difference between time t-1 and t.
-
         Args:
             states (List[str]): Final logical state bitstrings.
-
         Returns:
             np.ndarray: Final syndrome bits, shape (shots, ancillas)
         """
@@ -125,7 +122,6 @@ class IBMSampler:
     def _get_syndrome_matrix(self, syndromes: List[str], final_state: List[str]) -> np.ndarray:
         """
         Builds the full syndrome matrix including initial and final logical readings.
-
         Returns:
             np.ndarray: Shape (shots, ancillas * time_steps)
         """
@@ -142,7 +138,6 @@ class IBMSampler:
     def _extract_detection_events(self, syndrome: np.ndarray) -> np.ndarray:
         """
         Converts syndrome matrix to detection event matrix (flips).
-
         Returns:
             np.ndarray: Boolean matrix of shape (shots, ancillas * (t - 1))
         """
@@ -155,19 +150,24 @@ class IBMSampler:
     def _extract_logical_flips(self, middle_states: List[str], final_state: List[str]) -> np.ndarray:
         """
         Extracts the final logical state as binary classification.
-
         Returns:
             np.ndarray: Boolean array of shape (shots, t), with flip at last time step.
         """
-        logical_states = [a + b for a, b in zip(middle_states, [s[0] for s in final_state])]
-        arr = self._bitstrings_to_array(logical_states)
-        logical_flips =  np.cumsum(arr, axis=1) > 0
-        return logical_flips
+        if middle_states is None:
+            diff_parity = np.array([s[0] == "1" for s in final_state]) # 0/1 klassning
+            matrix = np.zeros((len(diff_parity), self.t), dtype=bool)
+            matrix[:, -1] = diff_parity
+            return matrix
+    
+        else:
+            logical_states = [a + b for a, b in zip(middle_states, [s[0] for s in final_state])]
+            arr = self._bitstrings_to_array(logical_states)
+            logical_flips =  np.cumsum(arr, axis=1) > 0
+            return logical_flips
 
     def load_jobdata(self) -> Tuple[np.ndarray, np.ndarray]:
         """
         Main entry point: loads detection events and logical flip labels.
-
         Returns:
             Tuple[np.ndarray, np.ndarray]: (detector events, final logical flips)
         """
