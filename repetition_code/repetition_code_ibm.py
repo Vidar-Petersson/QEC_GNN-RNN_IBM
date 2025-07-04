@@ -141,7 +141,7 @@ class QuantumErrorCorrection:
         else:
             # Run on a real IBM backend
             sampler = Sampler(self.backend)
-            job = sampler.run(transpiled_circuit, shots=self.shots)
+            job = sampler.run([transpiled_circuit], shots=self.shots)
             result = job.result()
             filename = f"./jobdata/ibm/{job.job_id()}_{self.code_distance}_{self.time_steps}_{self.shots}_{self.initial_state}.json"
 
@@ -184,5 +184,5 @@ class QuantumErrorCorrection:
         return results
 
 if __name__ == "__main__":
-    qec = QuantumErrorCorrection(code_distance=3, time_steps=5, shots=2_000_000, initial_state=0, simulator=True)
+    qec = QuantumErrorCorrection(code_distance=3, time_steps=5, shots=1_000_000, initial_state=0, simulator=False)
     qec.execute()
