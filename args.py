@@ -14,6 +14,7 @@ class Args:
     seed: int | None = None
     norm: float | int = torch.inf
     train_all_times: bool = True # Evaluate if working correctly
+    simulator_backend: bool = True
 
     # Torch
     device: torch.device = field(
@@ -34,6 +35,6 @@ class Args:
     n_gru_layers: int = 4
 
     # Training
-    training_split: float = 0.9 # Portion of data used in training
+    val_fraction: float = 0.1 # Portion of data used for validation
     pre_train: bool = False # If simulated data should be used for pre-training network
     log_wandb: bool = False
