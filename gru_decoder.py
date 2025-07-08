@@ -1,7 +1,7 @@
 import torch, time, os
 import torch.nn as nn 
 from args import Args
-from utils import GraphConvLayer, TrainingLogger, group, standard_deviation, prefetch_generator
+from utils import GraphConvLayer, TrainingLogger, group, standard_deviation, prefetch_generator, generate_batches_async
 from torch_geometric.nn import global_mean_pool
 from torch.nn.utils.rnn import pad_packed_sequence
 from tqdm import tqdm
@@ -78,12 +78,17 @@ class GRUDecoder(nn.Module):
 
         gc = GraphCreator(self.args)
         gc.train_val_split()
-        validation_batches = gc.generate_batch(mode="validation")
         
         optim = torch.optim.Adam(self.parameters(), lr=self.args.lr)
         schedule = lambda epoch: max(0.95 ** epoch, self.args.min_lr / self.args.lr)
         scheduler = LambdaLR(optim, lr_lambda=schedule)
         best_accuracy = 0
+
+        # Förbered validation en gång (om det inte är stort)
+        validation_batches = gc.generate_batch(mode="validation")
+
+        # Starta första async-genereringen
+        thread, get_next_batches = generate_batches_async(gc, mode="training")
         
         for i in range(1, self.args.n_epochs + 1):
             if local_log:
@@ -95,11 +100,17 @@ class GRUDecoder(nn.Module):
             
             self.train()
             t0 = time.perf_counter()
-            train_batches = prefetch_generator(
-                lambda: gc.generate_batch(mode="training"),
-                max_prefetch=1
-            ) 
-            train_batches = gc.generate_batch(mode="training")
+            # train_batches = prefetch_generator(
+            #     lambda: gc.generate_batch(mode="training"),
+            #     max_prefetch=1
+            # ) 
+            # train_batches = gc.generate_batch(mode="training")
+                # Vänta på att tråden ska bli klar och hämta batch-listan
+            thread.join()
+            train_batches = get_next_batches()
+
+            # Starta batchgenerering för nästa epok parallellt
+            thread, get_next_batches = generate_batches_async(gc, mode="training")
             t1 = time.perf_counter()
             data_time = t1 - t0
         

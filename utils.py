@@ -10,6 +10,20 @@ from typing import Dict
 import threading, queue
 StateDict = Dict[str, torch.Tensor]
 
+from threading import Thread
+
+def generate_batches_async(gc, mode):
+    """ Kör generate_batch i bakgrunden och returnerar en tråd samt en variabel att fyllas """
+    result = []
+
+    def _target():
+        nonlocal result
+        result = gc.generate_batch(mode=mode)
+
+    thread = Thread(target=_target)
+    thread.start()
+    return thread, lambda: result
+
 def prefetch_generator(gen_fn, max_prefetch=2):
     q = queue.Queue(max_prefetch)
     sentinel = object()
