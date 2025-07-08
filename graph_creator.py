@@ -30,23 +30,23 @@ class GraphCreator:
         self.syndromes, self.flips = self.IBMSampler.load_jobdata() # Includes trivial syndromes, size as original file
         self.filename = self.IBMSampler.filename
         
-        self.syndromes, self.flips = self.syndromes[:200000,:], self.flips[:200000,:] # Only for light testing
+        self.syndromes, self.flips = self.syndromes[:400000,:], self.flips[:400000,:] # Only for light testing
         trivial_syndrome_mask = np.any(self.syndromes, axis=1) # Mask for trivial syndromes where no detection event happend
         t1 = time.perf_counter()
         print(f"Loaded IBM jobdata {self.filename} (d={self.distance}, t={self.t}) with {self.syndromes.shape[0]} shots ({np.mean(~trivial_syndrome_mask)*100:.1f}% trivial) in {t1-t0:.2f} s.")
         self.syndromes, self.flips = self.syndromes[trivial_syndrome_mask], self.flips[trivial_syndrome_mask]
 
-
-        def _generate_detector_coordinates(d, t): # Lägga denna separat?
-            d -= 1
-            col0 = np.tile(np.arange(d), t)
-            col1 = np.zeros(d * t, dtype=np.int64)
-            col2 = np.repeat(np.arange(t), d)
-            return np.stack((col0, col1, col2), axis=1)
-
-        self.detector_coordinates = _generate_detector_coordinates(self.distance, self.t)
+        self.detector_coordinates = self._generate_detector_coordinates(self.distance, self.t)
         self.stabilizer_mask = np.ones((1, self.distance-1), dtype=np.uint8) # Mask for type of stabiliser, not exactly needed for the repetition code
         
+    @staticmethod
+    def _generate_detector_coordinates(d, t):
+        d -= 1
+        col0 = np.tile(np.arange(d), t)
+        col1 = np.zeros(d * t, dtype=np.int64)
+        col2 = np.repeat(np.arange(t), d)
+        return np.stack((col0, col1, col2), axis=1)
+
     def get_sliding_window(self, node_features: list[np.ndarray], sampler_t: int
                         ) -> tuple[list[np.ndarray], np.ndarray]:
         """
@@ -253,10 +253,6 @@ class GraphCreator:
             synd_batch = syndromes[i:i+batch_size]
             flips_batch = flips[i:i+batch_size]
 
-            # Hoppa över om batchen blir mindre än batch_size (t.ex. sista)
-            if synd_batch.shape[0] < batch_size:
-                break
-
             # Extract graph structure and labels for non-empty chunks
             node_features, batch_labels, chunk_labels = self.get_node_features(synd_batch)
             node_features = torch.from_numpy(node_features)
@@ -297,11 +293,8 @@ class GraphCreator:
         return all_batches
 
 if __name__ == "__main__":
-    args = Args(error_rates=[0.002], t=[21], distance=3, sliding=True, dt=2, simulator_backend=True)
-    dataset = GraphCreator(args)
-    # node_features, edge_index, labels, label_map, edge_attr, aligned_flips, lengths, last_label = dataset.generate_batch()
-    t0 = time.perf_counter()
-    batches = dataset.generate_batch()
-    print(f"Generated {len(batches)} batches of size {args.batch_size}")
-    print(f"First batch node_features shape: {batches[0][0].shape}")
-    print(f"{time.perf_counter() - t0:.3f} seconds")
+    args = Args(t=[6], distance=3, sliding=True, dt=2, simulator_backend=False)
+    gc = GraphCreator(args)
+    gc.train_val_split()
+    train_batches = gc.generate_batch(mode="training")
+    print(f"Generated {len(train_batches)} training batches of size {args.batch_size}")
