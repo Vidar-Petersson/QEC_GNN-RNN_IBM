@@ -1,7 +1,7 @@
 import torch, time, os
 import torch.nn as nn 
 from args import Args
-from utils import GraphConvLayer, TrainingLogger, group, standard_deviation
+from utils import GraphConvLayer, TrainingLogger, group, standard_deviation, prefetch_generator
 from torch_geometric.nn import global_mean_pool
 from torch.nn.utils.rnn import pad_packed_sequence
 from tqdm import tqdm
@@ -94,13 +94,18 @@ class GRUDecoder(nn.Module):
             data_time, model_time = 0, 0
             
             self.train()
-            t0 = time.perf_counter() 
+            t0 = time.perf_counter()
+            train_batches = prefetch_generator(
+                lambda: gc.generate_batch(mode="training"),
+                max_prefetch=1
+            ) 
             train_batches = gc.generate_batch(mode="training")
             t1 = time.perf_counter()
             data_time = t1 - t0
         
             for batch in train_batches:
                 optim.zero_grad()
+                batch = [t.to(self.args.device) for t in batch]
     
                 x, edge_index, batch_labels, label_map, edge_attr, aligned_flips, lengths, last_label = batch
                 # Forward pass through the model

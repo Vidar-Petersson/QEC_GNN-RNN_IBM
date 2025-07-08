@@ -298,7 +298,7 @@ class GraphCreator:
             label_map = np.array(list(zip(batch_labels, chunk_labels)))
             label_map, counts = np.unique(label_map, axis=0, return_counts=True)
             labels = np.repeat(np.arange(counts.shape[0]), counts).astype(np.int64)
-            label_map = torch.from_numpy(label_map)
+            label_map = torch.from_numpy(label_map).long()
             labels = torch.from_numpy(labels)
 
             # Extract graph edges and attributes
@@ -308,12 +308,6 @@ class GraphCreator:
             aligned_flips, lengths = self.align_labels_to_outputs(label_map, flips_batch)
 
             # Move everything to the appropriate device
-            node_features = node_features.to(self.device)
-            labels = labels.to(self.device)
-            label_map = label_map.to(dtype=torch.float32, device=self.device)
-            edge_index = edge_index.to(self.device)
-            edge_attr = edge_attr.to(self.device)
-            lengths = lengths.to(self.device)
             last_label_batch = flips_batch[:, -1:]
 
             all_batches.append((

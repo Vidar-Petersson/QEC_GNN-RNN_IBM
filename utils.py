@@ -7,7 +7,22 @@ import torch
 import logging
 import time
 from typing import Dict
+import threading, queue
 StateDict = Dict[str, torch.Tensor]
+
+def prefetch_generator(gen_fn, max_prefetch=2):
+    q = queue.Queue(max_prefetch)
+    sentinel = object()
+    def _worker():
+        for item in gen_fn():
+            q.put(item)
+        q.put(sentinel)
+    threading.Thread(target=_worker, daemon=True).start()
+    while True:
+        batch = q.get()
+        if batch is sentinel:
+            break
+        yield batch
 
 def group(x, label_map):
         """
