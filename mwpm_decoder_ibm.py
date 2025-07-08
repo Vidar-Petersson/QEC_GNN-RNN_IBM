@@ -59,7 +59,7 @@ class MWPMDecoder:
               f"with {self.total_shots} shots ({trivial_share*100:.1f}% trivial) "
               f"in {time.perf_counter() - t0:.2f}s.")
 
-    def _error_correlation_matrix(self) -> np.ndarray:
+    def _error_correlation_matrix_simple(self) -> np.ndarray:
         """
         Compute the error correlation matrix from the observed syndromes.
 
@@ -84,7 +84,37 @@ class MWPMDecoder:
 
         np.fill_diagonal(correlation_matrix, 0.0)
         return correlation_matrix
+    
+    def _error_correlation_matrix_full(self) -> np.ndarray:
+        """
+        Compute the full correlation matrix from the observed syndromes.
 
+        Returns
+        -------
+        pij_matrix : np.ndarray
+            A symmetric matrix of error-pairing probabilities between detector events.
+        """
+        x = self.syndromes.astype(np.float64)  # shape (shots, N)
+        N = x.shape[1]
+
+        # Compute means
+        mean_i = x.mean(axis=0)  # shape (N,)
+        mean_ij = (x.T @ x) / x.shape[0]  # shape (N, N)
+
+        # Numerator and denominator
+        numerator = mean_ij - np.outer(mean_i, mean_i)
+        denominator = 1 - 2 * mean_i[:, None] - 2 * mean_i[None, :] + 4 * mean_ij
+
+        with np.errstate(divide='ignore', invalid='ignore'):
+            sqrt_term = np.sqrt(1 - 4 * numerator / denominator)
+            pij = 0.5 - 0.5 * sqrt_term
+
+        pij = np.where(np.isfinite(pij), pij, 0.0)  # Replace NaNs and infs with 0.0
+        np.fill_diagonal(pij, 0.0)  # set diagonal to 0 for clarity
+
+        return pij
+
+    
     def _get_edges(self) -> None:
         """
         Build the matching graph with edges weighted according to the selected weight scheme.
@@ -97,7 +127,7 @@ class MWPMDecoder:
 
         # Compute edge weights
         if self.weight_scheme == 'p_ij':
-            error_correlation = self._error_correlation_matrix()
+            error_correlation = self._error_correlation_matrix_simple()
             error_correlation[error_correlation <= 0] = 1e-7  # Avoid log(0) or negative weights
             weights = -np.log(error_correlation)
         elif self.weight_scheme == 'uniform':
@@ -179,6 +209,7 @@ class MWPMDecoder:
         trivial_count = np.sum(~nontrivial)
 
         # Logical accuracy over all validation samples
+        print("Non-trivial accuracy:", correct/predicted.shape[0])
         logical_accuracy = (correct + trivial_count) / val_count
         return logical_accuracy
 
@@ -197,7 +228,7 @@ class MWPMDecoder:
 
 
 if __name__ == "__main__":
-    args = Args(t=[6], distance=3, sliding=True, dt=2, simulator_backend=False)
-    decoder = MWPMDecoder(args, weight_scheme="uniform")
+    args = Args(t=[101], distance=3, sliding=True, dt=2, simulator_backend=True)
+    decoder = MWPMDecoder(args, weight_scheme="p_ij")
     accuracy = decoder.decode()
     print(f"Decoder completed with logical accuracy: {accuracy:.3f}")
