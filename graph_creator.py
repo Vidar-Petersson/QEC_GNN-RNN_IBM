@@ -30,7 +30,7 @@ class GraphCreator:
         self.syndromes, self.flips = self.IBMSampler.load_jobdata() # Includes trivial syndromes, size as original file
         self.filename = self.IBMSampler.filename
         
-        self.syndromes, self.flips = self.syndromes[:50000,:], self.flips[:50000,:] # Only for light testing
+        self.syndromes, self.flips = self.syndromes[:200000,:], self.flips[:200000,:] # Only for light testing
         trivial_syndrome_mask = np.any(self.syndromes, axis=1) # Mask for trivial syndromes where no detection event happend
         t1 = time.perf_counter()
         print(f"Loaded IBM jobdata {self.filename} (d={self.distance}, t={self.t}) with {self.syndromes.shape[0]} shots ({np.mean(~trivial_syndrome_mask)*100:.1f}% trivial) in {t1-t0:.2f} s.")
@@ -212,6 +212,7 @@ class GraphCreator:
 
         self.train_syndromes, self.train_flips = self.syndromes[train_idx], self.flips[train_idx] 
         self.val_syndromes, self.val_flips = self.syndromes[val_idx], self.flips[val_idx]
+        print(f"Train/val-split: {self.train_syndromes.shape[0]} / {self.val_syndromes.shape[0]}")
 
     def generate_batch(self, mode: str = "validation"):
         """
@@ -230,11 +231,14 @@ class GraphCreator:
         elif mode == "training":
             syndromes = self.train_syndromes
             flips = self.train_flips
-
+            
         all_batches = []
         perm = np.random.permutation(syndromes.shape[0])
         syndromes = syndromes[perm]
         flips = flips[perm]
+
+        num_total = syndromes.shape[0]
+        batch_size = self.batch_size
         
         # Keep only labels at chunk boundaries (i.e., end of each chunk)
         flips = flips[:, self.dt - 1:]  # shape: [batch_size, g - 1], where g = t - dt + 2
@@ -243,10 +247,9 @@ class GraphCreator:
         last_label = flips[:, -1:]  # shape [B, 1]
         flips = torch.cat([flips, last_label], dim=1)  # shape [B, g]
 
-        num_total = syndromes.shape[0]
-        batch_size = self.batch_size
 
-        for i in tqdm(range(0, num_total, batch_size)):
+
+        for i in tqdm(range(0, num_total, batch_size), desc=f"Generating {mode} batches"):
             synd_batch = syndromes[i:i+batch_size]
             flips_batch = flips[i:i+batch_size]
 

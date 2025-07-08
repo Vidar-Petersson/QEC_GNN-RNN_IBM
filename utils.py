@@ -8,107 +8,6 @@ import logging
 import time
 from typing import Dict
 StateDict = Dict[str, torch.Tensor]
-import stim
-
-def make_surface_code_with_logical_z_tracking(distance: int, rounds: int, error_rate: float) -> stim.Circuit:
-    base = stim.Circuit.generated(
-        code_task="surface_code:rotated_memory_x",
-        distance=distance,
-        rounds=rounds,
-        after_clifford_depolarization=error_rate,
-        after_reset_flip_probability=error_rate,
-        before_measure_flip_probability=error_rate,
-        before_round_data_depolarization=error_rate,
-    )
-
-    # Split into prefix, repeat block, and suffix
-    for i, instr in enumerate(base):
-        if isinstance(instr, stim.CircuitRepeatBlock):
-            prefix = base[:i]
-            repeat_block = instr
-            suffix = base[i+1:]
-            break
-    else:
-        raise ValueError("No REPEAT block found in generated circuit.")
-    def get_logical_z_qubits_west_edge(circuit: stim.Circuit) -> list[int]:
-        coords = circuit.get_final_qubit_coordinates()
-        return sorted(
-            [q for q, (x, y) in coords.items() if x == 1],
-            key=lambda q: coords[q][1]  # sort by y
-        )
-    # Get logical Z path: western row of data qubits in rotated layout
-    logical_z_qubits = get_logical_z_qubits_west_edge(base)
-
-    def logical_z_measurement_block(index: int) -> stim.Circuit:
-        c = stim.Circuit()
-        anc = 0
-        c.append("R", [anc])
-        for q in logical_z_qubits:
-            c.append("H", [q])
-        for q in logical_z_qubits:
-            c.append("CX", [q, anc])
-        for q in logical_z_qubits:
-            c.append("H", [q])
-        c.append("MR", [anc])
-        c += stim.Circuit(f"OBSERVABLE_INCLUDE({index}) rec[-1]")
-        return c
-
-    # Patch detector offsets in repeat block
-    def patch_detector_offsets(circuit_block, extra_offset):
-        patched = stim.Circuit()
-        for instr in circuit_block:
-            if instr.name == "DETECTOR":
-                targets = instr.targets_copy()
-                args = []
-                rec_count = sum(t.is_measurement_record_target for t in targets)
-                rec_seen = 0
-                for t in targets:
-                    if t.is_measurement_record_target:
-                        rec_seen += 1
-                        shift = extra_offset if rec_seen == rec_count else 0
-                        args.append(f"rec[{t.value - shift}]")
-                    else:
-                        args.append(str(t))
-                loc = "(" + ", ".join(str(x) for x in instr.gate_args_copy()) + ")" if instr.gate_args_copy() else ""
-                patched += stim.Circuit(f"DETECTOR{loc} " + " ".join(args))
-            else:
-                patched.append(instr)
-        return patched
-
-    patched_repeat_block = patch_detector_offsets(repeat_block.body_copy(), extra_offset=1)
-
-    new_circuit = stim.Circuit()
-    new_circuit.append("QUBIT_COORDS", [0], [0, 0])  # Ancilla at index 0, coord (0, 0)
-    new_circuit += prefix
-    new_circuit += logical_z_measurement_block(0)
-
-    for r in range(1, rounds - 1):
-        new_circuit += patched_repeat_block
-        new_circuit += logical_z_measurement_block(r)
-    # no ancilla based measurement of Z_L in last round, take direct measurement of
-    # original circuit instead
-    new_circuit += patched_repeat_block
-
-    patched_suffix = stim.Circuit()
-
-    def patch_detector_offsets_suffix(suffix):
-        patched = stim.Circuit()
-        for instr in suffix:
-            if instr.name == "OBSERVABLE_INCLUDE":
-                # Only relabel observable index; keep original rec[] indices
-                targets = instr.targets_copy()
-                rec_targets = " ".join(f"rec[{t.value}]" for t in targets)
-                patched += stim.Circuit(f"OBSERVABLE_INCLUDE({rounds - 1}) {rec_targets}")
-
-            else:
-                patched.append(instr)
-        return patched
-
-    patched_suffix = patch_detector_offsets_suffix(suffix)
-    new_circuit += patched_suffix
-
-    return new_circuit
-
 
 def group(x, label_map):
         """
@@ -159,6 +58,9 @@ class TrainingLogger:
         self.statsfile = statsfile
         self.best_accuracy = 0 
     
+    def on_training_begin(self, args):
+        logging.info(f"Training with t = {args.t}, dt = {args.dt}, distance = {args.distance}")
+    
     def on_epoch_begin(self, epoch):
         self.t0 = time.perf_counter()
         self.epoch = epoch
@@ -166,26 +68,33 @@ class TrainingLogger:
     
     def on_epoch_end(self, logs=None):
         epoch_time = time.perf_counter() - self.t0
-        if logs["accuracy"] > self.best_accuracy:
-            self.best_accuracy = logs["accuracy"]
+
+        val_acc = logs["val_acc"]
+        val_loss = logs["val_loss"]
+        train_acc = logs["train_acc"]
+        train_loss = logs["train_loss"]
+
+        if val_acc > self.best_accuracy:
+            self.best_accuracy = val_acc
+
         logging.info(
-            f"EPOCH {self.epoch} finished in {epoch_time:.3f} seconds with lr = {logs['lr']:.2e}:\n"
-            f"\tloss = {logs['loss']:.5f}, accuracy = {logs['accuracy']:.4f} ({self.best_accuracy:.4f})\n"
-            f"\tmodel time = {logs['model_time']:.2f} seconds, "
-            f"data time = {logs['data_time']:.2f} seconds"
+            f"EPOCH {self.epoch} finished in {epoch_time:.3f} seconds with learning_rate = {logs['learning_rate']:.2e}:\n"
+            f"\tTrain   loss = {train_loss:.5f}, accuracy = {train_acc:.4f}\n"
+            f"\tVal     loss = {val_loss:.5f}, accuracy = {val_acc:.4f} (best = {self.best_accuracy:.4f})\n"
+            f"\tModel time = {logs.get('model_time', 0):.2f} seconds, "
+            f"Data time = {logs.get('data_time', 0):.2f} seconds"
         )
         self.logs.append(logs)
 
-    def on_training_begin(self, args):
-        logging.info(f"Training with t = {args.t}, dt = {args.dt}, distance = {args.distance}")
-    
     def on_training_end(self):
         stats = np.vstack((
-            [logs["model_time"] for logs in self.logs],
-            [logs["data_time"] for logs in self.logs],
-            [logs["lr"] for logs in self.logs],
-            [logs["loss"] for logs in self.logs],
-            [logs["accuracy"] for logs in self.logs],
+            [logs.get("model_time", 0) for logs in self.logs],
+            [logs.get("data_time", 0) for logs in self.logs],
+            [logs["learning_rate"] for logs in self.logs],
+            [logs["train_loss"] for logs in self.logs],
+            [logs["train_acc"] for logs in self.logs],
+            [logs["val_loss"] for logs in self.logs],
+            [logs["val_acc"] for logs in self.logs],
         ))
         if self.statsfile:
             os.makedirs("./stats", exist_ok=True)

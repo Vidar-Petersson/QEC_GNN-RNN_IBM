@@ -1,7 +1,7 @@
 import sys, os
 sys.path.append(os.path.join(os.path.dirname(__file__), os.pardir))
 from gru_decoder import GRUDecoder
-from data_stim import Args
+from args import Args
 from utils import TrainingLogger
 import torch
 from datetime import datetime
@@ -13,8 +13,8 @@ if __name__ == "__main__":
     parser.add_argument('--d', type=int, default=3)
     parser.add_argument('--t', type=int, default=6)
     parser.add_argument('--dt', type=int, default=2)
-    parser.add_argument('--batch_size', type=int, default=2048*5) #2048*256//10
-    parser.add_argument('--n_batches', type=int, default=1)
+    parser.add_argument('--batch_size', type=int, default=2048) #2048*256//10
+    parser.add_argument('--n_batches', type=int, default=1) # Irrelevant for IBM Data
     parser.add_argument('--n_epochs', type=int, default=200)
     parser.add_argument('--load_path', type=str, default=None)
 
@@ -38,7 +38,8 @@ if __name__ == "__main__":
         embedding_features=[5, 32, 64, 128, 256],
         hidden_size=128,
         n_gru_layers=4,
-        log_wandb=True
+        log_wandb=True,
+        simulator_backend=False
     )
     current_datetime = datetime.now().strftime("%y%m%d_%H%M%S")
     model_name = 'train_final_t_d' + str(d) + '_t' + str(t) + '_dt' + str(dt) + '_' + current_datetime

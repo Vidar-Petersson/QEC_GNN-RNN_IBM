@@ -1,6 +1,5 @@
 import torch, time, os
 import torch.nn as nn 
-from data_ibm import Dataset
 from args import Args
 from utils import GraphConvLayer, TrainingLogger, group, standard_deviation
 from torch_geometric.nn import global_mean_pool
@@ -9,6 +8,7 @@ from tqdm import tqdm
 from torch.optim.lr_scheduler import LambdaLR
 from copy import deepcopy
 import wandb
+from graph_creator import GraphCreator
 os.environ["WANDB_SILENT"] = "True"
 
 class GRUDecoder(nn.Module):
@@ -64,55 +64,53 @@ class GRUDecoder(nn.Module):
         return predictions, final_prediction
 
 
-    def train_model(
-            self, 
-            logger: TrainingLogger | None = None, 
-            save: str | None = None
-        ) -> None:
+    def train_model(self, logger: TrainingLogger | None = None, save: str | None = None) -> None:
         local_log = isinstance(logger, TrainingLogger)
         best_model = self.state_dict()
 
         if self.args.log_wandb:
-            wandb.init(project="GNN-RNN-repetition-code", name = save, config = self.args)
+            wandb.init(project="GNN-RNN-repetition_code", name = save, config = self.args)
 
         if local_log:
             logger.on_training_begin(self.args)
         
-        self.train()
-        dataset = Dataset(self.args)
+
+
+        gc = GraphCreator(self.args)
+        gc.train_val_split()
+        validation_batches = gc.generate_batch(mode="validation")
+        
         optim = torch.optim.Adam(self.parameters(), lr=self.args.lr)
         schedule = lambda epoch: max(0.95 ** epoch, self.args.min_lr / self.args.lr)
         scheduler = LambdaLR(optim, lr_lambda=schedule)
         best_accuracy = 0
-
-        t0 = time.perf_counter() 
-        x, edge_index, batch_labels, label_map, edge_attr, aligned_flips, lengths, last_label = dataset.generate_batch()
-
-        t1 = time.perf_counter()
-        data_time = t1 - t0
         
         for i in range(1, self.args.n_epochs + 1):
             if local_log:
                 logger.on_epoch_begin(i)
         
-            epoch_loss = 0
-            epoch_acc = 0
-            #data_time = 0
-            model_time = 0
-
-
+            epoch_train_loss, epoch_train_acc = 0.0, 0.0
+            epoch_val_loss,   epoch_val_acc   = 0.0, 0.0
+            data_time, model_time = 0, 0
+            
+            self.train()
+            t0 = time.perf_counter() 
+            train_batches = gc.generate_batch(mode="training")
+            t1 = time.perf_counter()
+            data_time = t1 - t0
         
-            for _ in range(self.args.n_batches):
+            for batch in train_batches:
                 optim.zero_grad()
     
-                t1 = time.perf_counter()
-
+                x, edge_index, batch_labels, label_map, edge_attr, aligned_flips, lengths, last_label = batch
                 # Forward pass through the model
                 # out has shape [B, g_actual], where:
                 #   B = batch size
                 #   g_actual = maximum number of non-empty chunks in batch
                 # (can vary between batches, <= t - dt + 2)
+
                 out, final_prediction = self.forward(x, edge_index, edge_attr, batch_labels, label_map)
+
                 if self.args.train_all_times:
                     # Create a boolean mask of shape [B, g_actual] indicating valid chunk positions
                     # For each batch element b, mask[b, i] = True if i < lengths[b]
@@ -133,23 +131,44 @@ class GRUDecoder(nn.Module):
                 # Backpropagation and optimization step
                 loss.backward()
                 optim.step()
-                
-                t2 = time.perf_counter()
-                
+
                 # Statistics
-                
-                model_time += t2 - t1
-                epoch_loss += loss.item()
-                epoch_acc += (torch.sum(torch.round(final_prediction) == last_label) / torch.numel(last_label)).item()
-            epoch_loss /= self.args.n_batches
-            epoch_acc /= self.args.n_batches
+                epoch_train_loss += loss.item()
+                epoch_train_acc += (torch.sum(torch.round(final_prediction) == last_label) / torch.numel(last_label)).item()
+
+            model_time = time.perf_counter() - t1
+
+            # — Valideringsfas —
+            self.eval()
+            with torch.no_grad():
+                for batch in validation_batches:
+                    x, edge_index, batch_labels, label_map, edge_attr, aligned_flips, lengths, last_label = batch
+                    out, final_pred = self.forward(x, edge_index, edge_attr, batch_labels, label_map)
+                    if self.args.train_all_times:
+                        mask     = torch.arange(out.size(1), device=out.device)[None, :] < lengths[:, None]
+                        loss_raw = nn.functional.binary_cross_entropy(out, aligned_flips, reduction='none')
+                        loss     = (loss_raw * mask).sum() / mask.sum()
+                    else:
+                        loss = nn.functional.binary_cross_entropy(final_pred, last_label)
+
+                    epoch_val_loss += loss.item()
+                    epoch_val_acc  += (torch.round(final_pred.view(-1)) == last_label).float().mean().item()
+            
+            epoch_train_loss /= len(train_batches)
+            epoch_train_acc  /= len(train_batches)
+            epoch_val_loss   /= len(validation_batches)
+            epoch_val_acc    /= len(validation_batches)
+
+            scheduler.step()
 
             metrics = {
-                "loss":  epoch_loss,
-                "accuracy": epoch_acc,
-                "lr": scheduler.get_last_lr()[0],
-                "data_time": data_time,
-                "model_time": model_time
+                "train_loss":    epoch_train_loss,
+                "train_acc":     epoch_train_acc,
+                "val_loss":      epoch_val_loss,
+                "val_acc":       epoch_val_acc,
+                "learning_rate": scheduler.get_last_lr()[0],
+                "data_time":     data_time,
+                "model_time":    model_time
             }
 
             if self.args.log_wandb:
@@ -157,20 +176,18 @@ class GRUDecoder(nn.Module):
             if local_log:
                 logger.on_epoch_end(logs=metrics)
 
-            if epoch_acc > best_accuracy:
-                best_accuracy = epoch_acc
+            if epoch_val_acc > best_accuracy:
+                best_accuracy = epoch_val_acc
                 if save:
                     os.makedirs("./models", exist_ok=True)
                     torch.save(self.state_dict(), f"./models/{save}.pt")
-                    #wandb.save(self.state_dict()) # TODO: fix that wandb saves to wandb.ai
         
-            scheduler.step()
-            
+
         if local_log:
             logger.on_training_end()
 
 
-    def test_model(self, dataset: Dataset, n_iter=1000, verbose=True):
+    def test_model(self, dataset: GraphCreator, n_iter=1000, verbose=True):
         """
         Evaluates the model by feeding n_iter batches to the decoder and 
         calculating the mean and standard deviation of the accuracy. 
