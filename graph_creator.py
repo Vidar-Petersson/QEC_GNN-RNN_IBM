@@ -151,54 +151,91 @@ class GraphCreator:
         return node_features, batch_labels, chunk_labels
 
     
-    def get_edges(self, node_features: np.ndarray, labels) -> tuple[np.ndarray, np.ndarray, int]:
+    def get_edges(self, node_features: torch.Tensor, labels: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
         """
-        Returns edges between nodes. The edges are of shape [n_edges, 2].
-
-        Use ord=torch.inf for the supremum norm, ord=2 for euclidean norm.
-        """
-        # Compute edges.
-        edge_index = knn_graph(node_features, self.k, batch=labels)
-
-        # Compute the distances between the nodes:
-        delta = node_features[edge_index[1]] - node_features[edge_index[0]]
-        edge_attr = torch.linalg.norm(delta, ord=self.norm, dim=1) # by default self.norm = torch.inf
-
-        # Inverse square of the norm between two nodes.
-        edge_attr = 1 / edge_attr ** 2
-
-        return edge_index, edge_attr
-    
-    def align_labels_to_outputs(self, label_map: torch.Tensor, flips_full: torch.Tensor) -> torch.Tensor:
-        """
-        Given label_map and full logical flips, return a label tensor aligned
-        with the packed GRU output (i.e., labels only for non-empty chunks, in GRU order).
+        Compute graph edges and their weights. Everything stays on GPU.
 
         Args:
-            label_map: Tensor of shape [n_graphs, 2], with (batch_idx, chunk_idx)
-            flips_full: Tensor of shape [B, g], with one label per possible chunk
+            node_features: [num_nodes, feature_dim] on GPU
+            labels: [num_nodes] batch labels for each node
 
         Returns:
-            aligned_labels: Tensor of shape [B, L], aligned with GRU output
+            edge_index: [2, num_edges]
+            edge_attr: [num_edges]
         """
-        B = int(label_map[:, 0].max().item()) + 1 
 
-        lengths = torch.bincount(label_map[:, 0].long(), minlength=B)  # number of real chunks per batch
-        max_len = lengths.max().item()
+        # OBS: node_features should already be on GPU when passed in!
+        edge_index = knn_graph(node_features, k=self.k, batch=labels, loop=False)
 
+        # delta = node_features[edge_index[1]] - node_features[edge_index[0]]
+        # edge_attr = torch.max(torch.abs(delta), dim=1).values if self.norm == float('inf') \
+        #             else torch.linalg.norm(delta, ord=self.norm, dim=1)
+        # edge_attr = 1 / (edge_attr ** 2 + 1e-10)  # Epsilon för stabilitet
+
+        row, col = edge_index  # shape: [num_edges]
+        diffs = node_features[row] - node_features[col]  # shape: [num_edges, dim]
+        
+        # Efficient norm computation (inf-norm ≈ max(|x|))
+        if self.norm == torch.inf:
+            dists = diffs.abs().max(dim=1).values
+        elif self.norm == 2:
+            dists = torch.norm(diffs, p=2, dim=1)
+        else:
+            raise ValueError(f"Unsupported norm: {self.norm}")
+
+        # Avoid division by zero
+        dists = dists.clamp(min=1e-10)
+        edge_attr = 1 / (dists ** 2)
+
+        return edge_index, edge_attr
+
+    def align_labels_to_outputs(self, label_map: torch.Tensor, flips_full: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+        """
+        Aligns logical flip labels to GRU outputs.
+
+        Given indices of valid chunks (`label_map`), this returns their corresponding
+        labels (`flips_full`) in a [B, max_len]-shaped tensor, ordered by batch and
+        chunk position. Padding is applied to match the longest sequence.
+
+        Parameters
+        ----------
+        label_map : torch.Tensor
+            Tensor of shape [n, 2] with (batch_idx, chunk_idx) for valid chunks.
+        flips_full : torch.Tensor
+            Tensor of shape [B, g] with flip labels for all chunks.
+
+        Returns
+        -------
+        aligned_flips : torch.Tensor
+            Tensor of shape [B, max_len] with labels ordered and padded.
+        lengths : torch.Tensor
+            Tensor of shape [B] with number of valid chunks per batch.
+        """
+        B = int(label_map[:, 0].max().item()) + 1  # Number of batches
+        lengths = torch.bincount(label_map[:, 0].long(), minlength=B)  # Number of chunks per batch
+        max_len = lengths.max().item()  # Longest sequence length (for padding)
+
+        batch_idx = label_map[:, 0].long()  # Batch indices of valid chunks
+        chunk_idx = label_map[:, 1].long()  # Chunk indices within each batch
+
+        # Sort by batch index to group chunks belonging to the same batch
+        sorted_indices = torch.argsort(batch_idx)
+        batch_idx = batch_idx[sorted_indices]
+        chunk_idx = chunk_idx[sorted_indices]
+
+        # Compute the position of each chunk within its batch using a range per group
+        _, counts = batch_idx.unique_consecutive(return_counts=True)
+        pos_in_batch = torch.cat([
+            torch.arange(c, device=self.device) for c in counts
+        ])
+
+        # Create the output tensor and place the flip labels at the correct position
         aligned_flips = torch.zeros(B, max_len, device=self.device)
-        offsets = torch.zeros(B, dtype=torch.long, device=self.device)
+        aligned_flips[batch_idx, pos_in_batch] = flips_full[batch_idx, chunk_idx]
 
-        for i in range(label_map.size(0)):
-            b = int(label_map[i, 0])
-            t = int(label_map[i, 1])
-            pos = offsets[b].item()
-            aligned_flips[b, pos] = flips_full[b, t]
-            offsets[b] += 1
+        return aligned_flips, lengths  # lengths can be used for masking later
 
-        return aligned_flips, lengths  # counts = lengths for masking
-
-    def train_val_split(self, seed=None):
+    def train_val_split(self, seed=42):
 
         num_total = self.syndromes.shape[0]
         val_size = int(num_total * self.val_fraction)
@@ -248,8 +285,8 @@ class GraphCreator:
         flips = torch.cat([flips, last_label], dim=1)  # shape [B, g]
 
 
-
         for i in tqdm(range(0, num_total, batch_size), desc=f"Generating {mode} batches"):
+        # for i in range(0, num_total, batch_size):
             synd_batch = syndromes[i:i+batch_size]
             flips_batch = flips[i:i+batch_size]
 
