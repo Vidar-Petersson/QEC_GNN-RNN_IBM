@@ -161,8 +161,7 @@ class IBMSampler:
     
         else:
             logical_states = [a + b for a, b in zip(middle_states, [s[0] for s in final_state])]
-            arr = self._bitstrings_to_array(logical_states)
-            logical_flips =  np.cumsum(arr, axis=1) > 0
+            logical_flips = self._bitstrings_to_array(logical_states).astype(bool)
             return logical_flips
 
     def load_jobdata(self) -> Tuple[np.ndarray, np.ndarray]:
