@@ -30,7 +30,7 @@ class GraphCreator:
         self.syndromes, self.flips = self.IBMSampler.load_jobdata() # Includes trivial syndromes, size as original file
         self.filename = self.IBMSampler.filename
         
-        self.syndromes, self.flips = self.syndromes[:400000,:], self.flips[:400000,:] # Only for light testing
+        #self.syndromes, self.flips = self.syndromes[:400000,:], self.flips[:400000,:] # Only for light testing
         trivial_syndrome_mask = np.any(self.syndromes, axis=1) # Mask for trivial syndromes where no detection event happend
         t1 = time.perf_counter()
         print(f"Loaded IBM jobdata {self.filename} (d={self.distance}, t={self.t}) with {self.syndromes.shape[0]} shots ({np.mean(~trivial_syndrome_mask)*100:.1f}% trivial) in {t1-t0:.2f} s.")
@@ -285,8 +285,8 @@ class GraphCreator:
         flips = torch.cat([flips, last_label], dim=1)  # shape [B, g]
 
 
-        for i in tqdm(range(0, num_total, batch_size), desc=f"Generating {mode} batches"):
-        # for i in range(0, num_total, batch_size):
+        #for i in tqdm(range(0, num_total, batch_size), desc=f"Generating {mode} batches"):
+        for i in range(0, num_total, batch_size):
             synd_batch = syndromes[i:i+batch_size]
             flips_batch = flips[i:i+batch_size]
 
@@ -308,6 +308,12 @@ class GraphCreator:
             aligned_flips, lengths = self.align_labels_to_outputs(label_map, flips_batch)
 
             # Move everything to the appropriate device
+            node_features = node_features.to(self.device)
+            labels = labels.to(self.device)
+            label_map = label_map.to(dtype=torch.float32, device=self.device)
+            edge_index = edge_index.to(self.device)
+            edge_attr = edge_attr.to(self.device)
+            lengths = lengths.to(self.device)
             last_label_batch = flips_batch[:, -1:]
 
             all_batches.append((

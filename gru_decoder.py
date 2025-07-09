@@ -116,7 +116,6 @@ class GRUDecoder(nn.Module):
         
             for batch in train_batches:
                 optim.zero_grad()
-                batch = [t.to(self.args.device) for t in batch]
     
                 x, edge_index, batch_labels, label_map, edge_attr, aligned_flips, lengths, last_label = batch
                 # Forward pass through the model
