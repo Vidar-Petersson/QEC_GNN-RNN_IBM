@@ -2,12 +2,13 @@ import json
 from qiskit import transpile, QuantumCircuit, QuantumRegister, ClassicalRegister
 from qiskit_ibm_runtime import QiskitRuntimeService, RuntimeEncoder, SamplerV2 as Sampler, Batch
 from qiskit_aer import AerSimulator
+import numpy as np 
 
 class QuantumErrorCorrection:
     """
     Class for building and running quantum error correction circuits with Qiskit, both experimentally and in simulation.
     """
-    def __init__(self, code_distance: int, time_steps: int, shots: int, initial_state: int, simulator: bool):
+    def __init__(self, code_distance: int, time_steps: int, shots: int, initial_state: int, simulator: bool, angle_scale: float):
         """
         Initializes the system parameters and connects to a backend.
         
@@ -21,6 +22,7 @@ class QuantumErrorCorrection:
         self.shots = shots
         self.initial_state = initial_state
         self.simulator = simulator
+        self.angle_scale = angle_scale
 
         self.service = QiskitRuntimeService()
         self.backend = self.service.backend("ibm_marrakesh")  # Specify backend
@@ -62,6 +64,7 @@ class QuantumErrorCorrection:
         circuit.h(self.qreg_ancillas)  # Initialize all ancillas in |+> / |-> states
         circuit.barrier(self.qreg_data, *self.qreg_ancillas)
 
+        # Apply parity-check gates
         for i in range(self.code_distance - 1):
             circuit.cx(self.qreg_ancillas[i], self.qreg_data[i])
             circuit.cx(self.qreg_ancillas[i], self.qreg_data[i + 1])
@@ -70,24 +73,54 @@ class QuantumErrorCorrection:
         circuit.h(self.qreg_ancillas)
         circuit.barrier(*self.qreg_data, *self.qreg_ancillas)
 
-        offset = (self.code_distance - 1) * time_repetition_idx  # Offset in the classical register for this syndrome round
+        offset = (self.code_distance - 1) * time_repetition_idx
 
-        # Measure syndrome bits
+        # Measure ancillas to get syndrome
         for i in range(self.code_distance - 1):
             circuit.measure(self.qreg_ancillas[i], self.creg_syndromes[offset + i])
         circuit.barrier(*self.qreg_data, *self.qreg_ancillas)
 
-        # Measure the first data qubit for the logical flag
+        # Optional: middle flag from data qubit 0
         circuit.h(self.qreg_data[0])
         circuit.measure(self.qreg_data[0], self.creg_middle_states[time_repetition_idx])
         circuit.h(self.qreg_data[0])
 
-        # Reset ancilla qubits for reuse
+        # Reset ancillas to |0>
         for i in range(self.code_distance - 1):
             circuit.reset(self.qreg_ancillas[i])
+
+        # Conditional X to reset ancillas to |0>
+        # for i in range(self.code_distance - 1):
+        #     with circuit.if_test((self.creg_syndromes[offset + i], 1)):
+        #         circuit.x(self.qreg_ancillas[i])
+        if self.angle_scale != 0:
+            self.inject_small_rotation_error(circuit, self.qreg_data, self.angle_scale)
         
         circuit.barrier(*self.qreg_data, *self.qreg_ancillas)
         return circuit
+    
+    def inject_small_rotation_error(self, circuit: QuantumCircuit, qubits: list, angle_scale=np.pi/50):
+            """
+            Injects a small random unitary rotation on a single qubit to simulate analog noise.
+            
+            :param circuit:
+            :param qubit: The qubit (index or Qubit object) to apply the error to
+            :param max_angle: Maximum rotation angle in radians (default: pi/50 ≈ 0.063)
+            """
+            # Draw a small rotation angle from a normal distribution centered at 0
+            theta = np.random.normal(loc=0, scale=angle_scale)
+
+            # Sample a random unit vector on the Bloch sphere (uniformly)
+            phi = 2 * np.pi * np.random.rand()
+            costheta = 2 * np.random.rand() - 1
+            sintheta = np.sqrt(1 - costheta**2)
+            nx = sintheta * np.cos(phi)
+            ny = sintheta * np.sin(phi)
+            nz = costheta
+
+            # Apply a general unitary rotation about the (nx, ny, nz) axis with angle theta
+            # Approximated using Qiskit's general single-qubit gate u(θ, φ, λ)
+            circuit.u(theta * nx, theta * ny, theta * nz, qubits)
     
     def apply_final_readout(self, circuit: QuantumCircuit) -> QuantumCircuit:
         """ Measures and stores the final values of the data qubits. """
@@ -132,7 +165,7 @@ class QuantumErrorCorrection:
             job = simulator.run(transpiled_circuit, shots=self.shots, seed_simulator=42)
             result = job.result()
             
-            filename = f"./jobdata/aer/{job.job_id()}_{self.code_distance}_{self.time_steps}_{self.shots}_{self.initial_state}.json"
+            filename = f"./jobdata/aer/{job.job_id()}_{self.code_distance}_{self.time_steps}_{self.shots}_{self.initial_state}_{self.angle_scale}.json"
             with open(filename, "w") as file:
                 json.dump(result, file, cls=RuntimeEncoder)
             
@@ -143,7 +176,7 @@ class QuantumErrorCorrection:
             sampler = Sampler(self.backend)
             job = sampler.run([transpiled_circuit], shots=self.shots)
             result = job.result()
-            filename = f"./jobdata/ibm/{job.job_id()}_{self.code_distance}_{self.time_steps}_{self.shots}_{self.initial_state}.json"
+            filename = f"./jobdata/ibm/{job.job_id()}_{self.code_distance}_{self.time_steps}_{self.shots}_{self.initial_state}_{self.angle_scale}.json"
 
             with open(filename, "w") as file:
                 json.dump(result, file, cls=RuntimeEncoder)
@@ -175,7 +208,7 @@ class QuantumErrorCorrection:
             # Retrieve results afterwards
             for i, job in jobs:
                 result = job.result()
-                filename = f"./jobs/training_data_same_qubit/{job.job_id()}_{self.code_distance}_{self.time_steps}_{self.shots}_{self.initial_state}.json"
+                filename = f"./jobs/training_data_same_qubit/{job.job_id()}_{self.code_distance}_{self.time_steps}_{self.shots}_{self.initial_state}_{self.angle_scale}.json"
                 with open(filename, "w") as file:
                     json.dump(result, file, cls=RuntimeEncoder)
                 print(f"Result {i} saved as '{filename}'.")
@@ -184,5 +217,5 @@ class QuantumErrorCorrection:
         return results
 
 if __name__ == "__main__":
-    qec = QuantumErrorCorrection(code_distance=3, time_steps=5, shots=1_000_000, initial_state=0, simulator=False)
+    qec = QuantumErrorCorrection(code_distance=3, time_steps=5, shots=10_000_000, initial_state=0, simulator=True, angle_scale=0)
     qec.execute()
