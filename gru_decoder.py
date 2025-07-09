@@ -74,8 +74,6 @@ class GRUDecoder(nn.Module):
         if local_log:
             logger.on_training_begin(self.args)
         
-
-
         gc = GraphCreator(self.args)
         gc.train_val_split()
         
@@ -84,8 +82,7 @@ class GRUDecoder(nn.Module):
         scheduler = LambdaLR(optim, lr_lambda=schedule)
         best_accuracy = 0
 
-        # Förbered validation en gång (om det inte är stort)
-        validation_batches = gc.generate_batch(mode="validation")
+        validation_batches = gc.generate_batches(mode="validation")
 
         # Starta första async-genereringen
         thread, get_next_batches = generate_batches_async(gc, mode="training")

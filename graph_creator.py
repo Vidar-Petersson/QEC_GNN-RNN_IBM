@@ -250,8 +250,21 @@ class GraphCreator:
         self.train_syndromes, self.train_flips = self.syndromes[train_idx], self.flips[train_idx] 
         self.val_syndromes, self.val_flips = self.syndromes[val_idx], self.flips[val_idx]
         print(f"Train/val-split: {self.train_syndromes.shape[0]} / {self.val_syndromes.shape[0]}")
+        self.analyze_class_balance(self.train_flips, self.val_flips)
 
-    def generate_batch(self, mode: str = "validation"):
+
+    def analyze_class_balance(self, train_flips, val_flips):
+        # Summera antalet 1:or och 0:or totalt
+        train_ones = np.sum(train_flips)
+        train_zeros = train_flips.size - train_ones
+        val_ones = np.sum(val_flips)
+        val_zeros = val_flips.size - val_ones
+
+        print("Klassfördelning:")
+        print(f"  [Träning]     1: {train_ones}   0: {train_zeros}   Andel 1: {train_ones / train_flips.size:.3f}")
+        print(f"  [Validering]  1: {val_ones}   0: {val_zeros}   Andel 1: {val_ones / val_flips.size:.3f}")
+
+    def generate_batches(self, mode: str = "validation"):
         """
         Generates batches of graphs from the entire dataset, where each batch 
         contains self.batch_size datapoints (i.e., shots).
@@ -327,7 +340,7 @@ class GraphCreator:
                 last_label_batch
             ))
 
-        return all_batches
+        return all_batches 
 
 if __name__ == "__main__":
     args = Args(t=[6], distance=3, sliding=True, dt=2, simulator_backend=False)
