@@ -2,7 +2,7 @@ import sys, os
 sys.path.append(os.path.join(os.path.dirname(__file__), os.pardir))
 from itertools import product
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from repetition_code.repetition_code import QuantumErrorCorrection
+from repetition_code.repetition_code_ibm import QuantumErrorCorrection
 
 
 def run_qec_job(code_distance, time_steps):

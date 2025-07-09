@@ -9,7 +9,7 @@ from dataloader_ibm import IBMSampler
 class GraphCreator:
     """
     Class that is used to generate graphs of errors that occur in quantum computers. 
-    Call generate_batch() to generate batches of graphs.
+    Call generate_batches() to generate batches of graphs.
     """
     def __init__(self, args: Args):
         self.device = args.device
@@ -343,8 +343,8 @@ class GraphCreator:
         return all_batches 
 
 if __name__ == "__main__":
-    args = Args(t=[6], distance=3, sliding=True, dt=2, simulator_backend=False)
+    args = Args(t=[6], distance=3, sliding=True, dt=2, simulator_backend=True)
     gc = GraphCreator(args)
     gc.train_val_split()
-    train_batches = gc.generate_batch(mode="training")
+    train_batches = gc.generate_batches(mode="training")
     print(f"Generated {len(train_batches)} training batches of size {args.batch_size}")

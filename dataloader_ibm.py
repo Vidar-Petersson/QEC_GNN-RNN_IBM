@@ -59,7 +59,7 @@ class IBMSampler:
         parts = name.split("_")
 
         job_id = parts[0]
-        code_distance, t, shots, initial_logical_state = map(int, parts[1:])
+        code_distance, t, shots, initial_logical_state = map(int, parts[1:5])
 
         return {
             "file_name": name,
@@ -92,7 +92,7 @@ class IBMSampler:
                 final_state.extend([final] * freq)
         else:
             data = data[0]  # Experimental jobs are returned as a list
-            syndromes = data.data.syndrome.get_bitstrings()
+            syndromes = data.data.syndromes.get_bitstrings()
             if hasattr(data.data, "middle_states"):
                 middle_states = data.data.middle_states.get_bitstrings()
             else:

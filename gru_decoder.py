@@ -1,13 +1,20 @@
-import torch, time, os
-import torch.nn as nn 
-from args import Args
-from utils import GraphConvLayer, TrainingLogger, group, standard_deviation, prefetch_generator, generate_batches_async
-from torch_geometric.nn import global_mean_pool
-from torch.nn.utils.rnn import pad_packed_sequence
-from tqdm import tqdm
-from torch.optim.lr_scheduler import LambdaLR
-from copy import deepcopy
+import os
+import time
+import torch
 import wandb
+
+from torch import nn
+from torch.optim.lr_scheduler import LambdaLR
+from torch.nn.utils.rnn import pad_packed_sequence
+from torch_geometric.nn import global_mean_pool
+
+from tqdm import tqdm
+
+from args import Args
+from utils import (
+    GraphConvLayer, TrainingLogger, group,
+    standard_deviation, generate_batches_async
+)
 from graph_creator import GraphCreator
 os.environ["WANDB_SILENT"] = "True"
 
@@ -33,14 +40,14 @@ class GRUDecoder(nn.Module):
             nn.Sigmoid()
         )
 
-    def embed(self, x, edge_index, edge_attr, batch_labels):
+    def _embed_graph(self, x, edge_index, edge_attr, batch_labels):
         for layer in self.embedding:
             x = layer(x, edge_index, edge_attr)
         return global_mean_pool(x, batch_labels)
 
     def forward(self, x, edge_index, edge_attr, batch_labels, label_map):
         # Run embedding + group
-        x = self.embed(x, edge_index, edge_attr, batch_labels)
+        x = self._embed_graph(x, edge_index, edge_attr, batch_labels)
         x = group(x, label_map)
 
         # GRU output: out_packed is packed sequence, h is final hidden state
@@ -97,15 +104,8 @@ class GRUDecoder(nn.Module):
             
             self.train()
             t0 = time.perf_counter()
-            # train_batches = prefetch_generator(
-            #     lambda: gc.generate_batch(mode="training"),
-            #     max_prefetch=1
-            # ) 
-            # train_batches = gc.generate_batch(mode="training")
-                # Vänta på att tråden ska bli klar och hämta batch-listan
             thread.join()
             train_batches = get_next_batches()
-
             # Starta batchgenerering för nästa epok parallellt
             thread, get_next_batches = generate_batches_async(gc, mode="training")
             t1 = time.perf_counter()
@@ -209,7 +209,7 @@ class GRUDecoder(nn.Module):
         data_time, model_time = 0, 0
         for i in tqdm(range(n_iter), disable=not verbose):
             t0 = time.perf_counter()
-            x, edge_index, batch_labels, label_map, edge_attr, aligned_flips, lengths, last_label = dataset.generate_batch()
+            x, edge_index, batch_labels, label_map, edge_attr, aligned_flips, lengths, last_label = dataset.generate_batches()
             t1 = time.perf_counter() 
             out, final_prediction = self.forward(x, edge_index, edge_attr, batch_labels, label_map)
             t2 = time.perf_counter()
