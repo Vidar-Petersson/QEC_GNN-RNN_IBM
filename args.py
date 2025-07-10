@@ -14,7 +14,10 @@ class Args:
     seed: int | None = None
     norm: float | int = torch.inf
     train_all_times: bool = True # Evaluate if working correctly
+    pretrained_checkpoint: str = None   # Sökväg till .pt-fil att förträna från
+    resume: bool = False               # Om True, läs in optimizer‑ och scheduler‑status
     simulator_backend: bool = True
+    patience: int = 20
 
     # Torch
     device: torch.device = field(

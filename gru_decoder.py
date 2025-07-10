@@ -13,7 +13,8 @@ from tqdm import tqdm
 from args import Args
 from utils import (
     GraphConvLayer, TrainingLogger, group,
-    standard_deviation, generate_batches_async
+    standard_deviation, generate_batches_async,
+    save_checkpoint, load_checkpoint
 )
 from graph_creator import GraphCreator
 os.environ["WANDB_SILENT"] = "True"
@@ -87,7 +88,26 @@ class GRUDecoder(nn.Module):
         optim = torch.optim.Adam(self.parameters(), lr=self.args.lr)
         schedule = lambda epoch: max(0.95 ** epoch, self.args.min_lr / self.args.lr)
         scheduler = LambdaLR(optim, lr_lambda=schedule)
-        best_accuracy = 0
+
+        # Early stopping setup
+        patience = self.args.patience
+        best_val_loss = float('inf')
+        no_improve = 0
+
+        # ----- NYTT: ladda pretrained eller återuppta träning -----
+        start_epoch = 1
+        if self.args.pretrained_checkpoint:
+            print(f"Loading pretrained weights from {self.args.pretrained_checkpoint}...")
+            ckpt_epoch = load_checkpoint(self,
+                self.args.pretrained_checkpoint,
+                optimizer=optim if self.args.resume else None,
+                scheduler=scheduler if self.args.resume else None,
+                resume=self.args.resume
+            )
+            if self.args.resume:
+                start_epoch = ckpt_epoch + 1
+                print(f"Resuming training from epoch {start_epoch}")
+        # -----------------------------------------------------------
 
         validation_batches = gc.generate_batches(mode="validation")
 
@@ -192,11 +212,19 @@ class GRUDecoder(nn.Module):
             if local_log:
                 logger.on_epoch_end(logs=metrics)
 
-            if epoch_val_acc > best_accuracy:
-                best_accuracy = epoch_val_acc
+            # Early stopping & checkpointing
+            if epoch_val_loss < best_val_loss:
+                best_val_loss = epoch_val_loss
+                no_improve = 0
                 if save:
-                    os.makedirs("./models", exist_ok=True)
-                    torch.save(self.state_dict(), f"./models/{save}.pt")
+                    ckpt_path = f"./models/{save}.pt"
+                    save_checkpoint(self, ckpt_path, optim, scheduler, i)
+                    print(f"Saved new best model ({epoch_val_log_acc:.5f}) at epoch {i} → {ckpt_path}")
+            else:
+                no_improve += 1
+                if no_improve >= patience:
+                    print(f"Early stopping triggered: no improvement in {patience} epochs.")
+                    break
         
 
         if local_log:

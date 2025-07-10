@@ -11,6 +11,23 @@ from threading import Thread
 from queue import Queue
 StateDict = Dict[str, torch.Tensor]
 
+def save_checkpoint(self, path: str, optimizer, scheduler, epoch: int):
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    torch.save({
+        'epoch': epoch,
+        'model_state_dict': self.state_dict(),
+        'optimizer_state_dict': optimizer.state_dict(),
+        'scheduler_state_dict': scheduler.state_dict(),
+    }, path)
+
+def load_checkpoint(self, path: str, optimizer=None, scheduler=None, resume: bool = False):
+    checkpoint = torch.load(path, map_location=self.args.device)
+    self.load_state_dict(checkpoint['model_state_dict'])
+    if resume and optimizer and scheduler:
+        optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
+        scheduler.load_state_dict(checkpoint['scheduler_state_dict'])
+    return checkpoint['epoch']
+
 def generate_batches_async(gc, mode):
     """
     Asynchronously generates batches by calling gc.generate_batches(mode) in a background thread.
