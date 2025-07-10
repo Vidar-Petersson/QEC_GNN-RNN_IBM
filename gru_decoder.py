@@ -100,6 +100,7 @@ class GRUDecoder(nn.Module):
         
             epoch_train_loss, epoch_train_acc = 0.0, 0.0
             epoch_val_loss,   epoch_val_acc   = 0.0, 0.0
+            epoch_val_log_acc_num = 0
             data_time, model_time = 0, 0
             
             self.train()
@@ -155,21 +156,23 @@ class GRUDecoder(nn.Module):
             with torch.no_grad():
                 for batch in validation_batches:
                     x, edge_index, batch_labels, label_map, edge_attr, aligned_flips, lengths, last_label = batch
-                    out, final_pred = self.forward(x, edge_index, edge_attr, batch_labels, label_map)
+                    out, final_prediction = self.forward(x, edge_index, edge_attr, batch_labels, label_map)
                     if self.args.train_all_times:
                         mask     = torch.arange(out.size(1), device=out.device)[None, :] < lengths[:, None]
                         loss_raw = nn.functional.binary_cross_entropy(out, aligned_flips, reduction='none')
                         loss     = (loss_raw * mask).sum() / mask.sum()
                     else:
-                        loss = nn.functional.binary_cross_entropy(final_pred, last_label)
+                        loss = nn.functional.binary_cross_entropy(final_prediction, last_label)
 
                     epoch_val_loss += loss.item()
-                    epoch_val_acc  += (torch.round(final_pred.view(-1)) == last_label).float().mean().item()
+                    epoch_val_acc  += (torch.sum(torch.round(final_prediction) == last_label) / torch.numel(last_label)).item()
+                    epoch_val_log_acc_num += torch.sum(torch.round(final_prediction) == last_label).item()
             
             epoch_train_loss /= len(train_batches)
             epoch_train_acc  /= len(train_batches)
             epoch_val_loss   /= len(validation_batches)
             epoch_val_acc    /= len(validation_batches)
+            epoch_val_log_acc = (epoch_val_log_acc_num + gc.val_num_trivial) / gc.val_size
 
             scheduler.step()
 
@@ -178,6 +181,7 @@ class GRUDecoder(nn.Module):
                 "train_acc":     epoch_train_acc,
                 "val_loss":      epoch_val_loss,
                 "val_acc":       epoch_val_acc,
+                "val_log_acc":   epoch_val_log_acc,
                 "learning_rate": scheduler.get_last_lr()[0],
                 "data_time":     data_time,
                 "model_time":    model_time
@@ -209,7 +213,7 @@ class GRUDecoder(nn.Module):
         data_time, model_time = 0, 0
         for i in tqdm(range(n_iter), disable=not verbose):
             t0 = time.perf_counter()
-            x, edge_index, batch_labels, label_map, edge_attr, aligned_flips, lengths, last_label = dataset.generate_batches()
+            x, edge_index, batch_labels, label_map, edge_attr, aligned_flips, lengths, last_label = dataset.generate_batch()
             t1 = time.perf_counter() 
             out, final_prediction = self.forward(x, edge_index, edge_attr, batch_labels, label_map)
             t2 = time.perf_counter()

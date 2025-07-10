@@ -92,7 +92,7 @@ class IBMSampler:
                 final_state.extend([final] * freq)
         else:
             data = data[0]  # Experimental jobs are returned as a list
-            syndromes = data.data.syndromes.get_bitstrings()
+            syndromes = data.data.syndrome.get_bitstrings()
             if hasattr(data.data, "middle_states"):
                 middle_states = data.data.middle_states.get_bitstrings()
             else:

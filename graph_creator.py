@@ -30,11 +30,9 @@ class GraphCreator:
         self.syndromes, self.flips = self.IBMSampler.load_jobdata() # Includes trivial syndromes, size as original file
         self.filename = self.IBMSampler.filename
         
-        #self.syndromes, self.flips = self.syndromes[:400000,:], self.flips[:400000,:] # Only for light testing
         trivial_syndrome_mask = np.any(self.syndromes, axis=1) # Mask for trivial syndromes where no detection event happend
         t1 = time.perf_counter()
         print(f"Loaded IBM jobdata {self.filename} (d={self.distance}, t={self.t}) with {self.syndromes.shape[0]} shots ({np.mean(~trivial_syndrome_mask)*100:.1f}% trivial) in {t1-t0:.2f} s.")
-        self.syndromes, self.flips = self.syndromes[trivial_syndrome_mask], self.flips[trivial_syndrome_mask]
 
         self.detector_coordinates = self._generate_detector_coordinates(self.distance, self.t)
         self.stabilizer_mask = np.ones((1, self.distance-1), dtype=np.uint8) # Mask for type of stabiliser, not exactly needed for the repetition code
@@ -238,17 +236,27 @@ class GraphCreator:
     def train_val_split(self, seed=42):
 
         num_total = self.syndromes.shape[0]
-        val_size = int(num_total * self.val_fraction)
+        self.val_size = int(num_total * self.val_fraction)
+        self.train_size = num_total - self.val_size
 
         rng = np.random.default_rng(seed)
         perm = rng.permutation(num_total)
 
         # Indexera direkt med permuteringen
-        val_idx = perm[:val_size]
-        train_idx = perm[val_size:]
+        val_idx = perm[:self.val_size]
+        train_idx = perm[self.val_size:]
 
         self.train_syndromes, self.train_flips = self.syndromes[train_idx], self.flips[train_idx] 
         self.val_syndromes, self.val_flips = self.syndromes[val_idx], self.flips[val_idx]
+
+        train_triv_syndrome_mask = np.any(self.train_syndromes, axis=1)
+        val_triv_syndrome_mask = np.any(self.val_syndromes, axis=1)
+
+        self.train_syndromes, self.train_flips = self.train_syndromes[train_triv_syndrome_mask], self.train_flips[train_triv_syndrome_mask] 
+        self.val_syndromes, self.val_flips = self.val_syndromes[val_triv_syndrome_mask], self.val_flips[val_triv_syndrome_mask]
+
+        self.val_num_trivial = np.sum(~val_triv_syndrome_mask)
+
         print(f"Train/val-split: {self.train_syndromes.shape[0]} / {self.val_syndromes.shape[0]}")
         self.analyze_class_balance(self.train_flips, self.val_flips)
 
