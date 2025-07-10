@@ -27,12 +27,12 @@ class GraphCreator:
         
         t0 = time.perf_counter() 
         self.IBMSampler = IBMSampler(distance=self.distance, t=self.t, simulator=self.simulator)
-        self.syndromes, self.flips = self.IBMSampler.load_jobdata() # Includes trivial syndromes, size as original file
+        self.detections, self.flips = self.IBMSampler.load_jobdata() # Includes trivial syndromes, size as original file
         self.filename = self.IBMSampler.filename
         
-        trivial_syndrome_mask = np.any(self.syndromes, axis=1) # Mask for trivial syndromes where no detection event happend
+        trivial_syndrome_mask = np.any(self.detections, axis=1) # Mask for trivial syndromes where no detection event happend
         t1 = time.perf_counter()
-        print(f"Loaded IBM jobdata {self.filename} (d={self.distance}, t={self.t}) with {self.syndromes.shape[0]} shots ({np.mean(~trivial_syndrome_mask)*100:.1f}% trivial) in {t1-t0:.2f} s.")
+        print(f"Loaded IBM jobdata {self.filename} (d={self.distance}, t={self.t}) with {self.detections.shape[0]} shots ({np.mean(~trivial_syndrome_mask)*100:.1f}% trivial) in {t1-t0:.2f} s.")
 
         self.detector_coordinates = self._generate_detector_coordinates(self.distance, self.t)
         self.stabilizer_mask = np.ones((1, self.distance-1), dtype=np.uint8) # Mask for type of stabiliser, not exactly needed for the repetition code
@@ -96,13 +96,13 @@ class GraphCreator:
         return updated_node_features, np.concatenate(all_chunk_labels)
 
 
-    def get_node_features(self, syndromes: np.ndarray) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    def get_node_features(self, detections: np.ndarray) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
         """
         Converts detection event indices into physical node features and assigns 
         them to batch and chunk labels, optionally applying a sliding window.
 
         Args:
-            syndromes: Boolean array of shape [batch_size, s] where s is the total
+            detections: Boolean array of shape [batch_size, s] where s is the total
                 number of detectors (t * number of stabilizers). Each entry indicates
                 whether a detection event occurred at a given space-time location.
 
@@ -116,7 +116,7 @@ class GraphCreator:
 
         # Decode syndrome indices into (x, y, t) coordinates using precomputed detector layout
         # Result: list of arrays, one per shot, each with shape [num_events_in_shot, 3]
-        node_features = [self.detector_coordinates[s] for s in syndromes]
+        node_features = [self.detector_coordinates[s] for s in detections]
 
         if self.sliding:
             # Total number of rounds used in this circuit
@@ -235,7 +235,7 @@ class GraphCreator:
 
     def train_val_split(self, seed=42):
 
-        num_total = self.syndromes.shape[0]
+        num_total = self.detections.shape[0]
         self.val_size = int(num_total * self.val_fraction)
         self.train_size = num_total - self.val_size
 
@@ -246,18 +246,18 @@ class GraphCreator:
         val_idx = perm[:self.val_size]
         train_idx = perm[self.val_size:]
 
-        self.train_syndromes, self.train_flips = self.syndromes[train_idx], self.flips[train_idx] 
-        self.val_syndromes, self.val_flips = self.syndromes[val_idx], self.flips[val_idx]
+        self.train_detections, self.train_flips = self.detections[train_idx], self.flips[train_idx] 
+        self.val_detections, self.val_flips = self.detections[val_idx], self.flips[val_idx]
 
-        train_triv_syndrome_mask = np.any(self.train_syndromes, axis=1)
-        val_triv_syndrome_mask = np.any(self.val_syndromes, axis=1)
+        train_triv_syndrome_mask = np.any(self.train_detections, axis=1)
+        val_triv_syndrome_mask = np.any(self.val_detections, axis=1)
 
-        self.train_syndromes, self.train_flips = self.train_syndromes[train_triv_syndrome_mask], self.train_flips[train_triv_syndrome_mask] 
-        self.val_syndromes, self.val_flips = self.val_syndromes[val_triv_syndrome_mask], self.val_flips[val_triv_syndrome_mask]
+        self.train_detections, self.train_flips = self.train_detections[train_triv_syndrome_mask], self.train_flips[train_triv_syndrome_mask] 
+        self.val_detections, self.val_flips = self.val_detections[val_triv_syndrome_mask], self.val_flips[val_triv_syndrome_mask]
 
         self.val_num_trivial = np.sum(~val_triv_syndrome_mask)
 
-        print(f"Train/val-split: {self.train_syndromes.shape[0]} / {self.val_syndromes.shape[0]}")
+        print(f"Train/val-split: {self.train_detections.shape[0]} / {self.val_detections.shape[0]}")
         self.analyze_class_balance(self.train_flips, self.val_flips)
 
 
@@ -284,18 +284,18 @@ class GraphCreator:
         """
 
         if mode == "validation":
-            syndromes = self.val_syndromes
+            detections = self.val_detections
             flips = self.val_flips
         elif mode == "training":
-            syndromes = self.train_syndromes
+            detections = self.train_detections
             flips = self.train_flips
             
         all_batches = []
-        perm = np.random.permutation(syndromes.shape[0])
-        syndromes = syndromes[perm]
+        perm = np.random.permutation(detections.shape[0])
+        detections = detections[perm]
         flips = flips[perm]
 
-        num_total = syndromes.shape[0]
+        num_total = detections.shape[0]
         batch_size = self.batch_size
         
         # Keep only labels at chunk boundaries (i.e., end of each chunk)
@@ -308,7 +308,7 @@ class GraphCreator:
 
         #for i in tqdm(range(0, num_total, batch_size), desc=f"Generating {mode} batches"):
         for i in range(0, num_total, batch_size):
-            synd_batch = syndromes[i:i+batch_size]
+            synd_batch = detections[i:i+batch_size]
             flips_batch = flips[i:i+batch_size]
 
             # Extract graph structure and labels for non-empty chunks
