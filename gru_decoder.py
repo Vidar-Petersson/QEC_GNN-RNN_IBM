@@ -91,7 +91,7 @@ class GRUDecoder(nn.Module):
 
         # Early stopping setup
         patience = self.args.patience
-        best_val_loss = float('inf')
+        best_val_acc = 0
         no_improve = 0
 
         # ----- NYTT: ladda pretrained eller återuppta träning -----
@@ -213,8 +213,8 @@ class GRUDecoder(nn.Module):
                 logger.on_epoch_end(logs=metrics)
 
             # Early stopping & checkpointing
-            if epoch_val_loss < best_val_loss:
-                best_val_loss = epoch_val_loss
+            if epoch_val_acc < best_val_acc:
+                best_val_acc = epoch_val_acc
                 no_improve = 0
                 if save:
                     ckpt_path = f"./models/{save}.pt"
