@@ -219,7 +219,7 @@ class GRUDecoder(nn.Module):
                 if save:
                     ckpt_path = f"./models/{save}.pt"
                     save_checkpoint(self, ckpt_path, optim, scheduler, i)
-                    print(f"Saved new best model ({epoch_val_log_acc:.5f}) at epoch {i} → {ckpt_path}")
+                    print(f"Saved new best model (log.acc.={epoch_val_log_acc:.5f} loss={epoch_val_loss}) at epoch {i} → {ckpt_path}")
             else:
                 no_improve += 1
                 if no_improve >= patience:
