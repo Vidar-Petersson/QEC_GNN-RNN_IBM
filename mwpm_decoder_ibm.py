@@ -1,11 +1,10 @@
 import time
 import numpy as np
 import pymatching
-import torch
-from torch.utils.data import random_split
 
 from args import Args
 from dataloader_ibm import IBMSampler
+from utils import standard_deviation
 
 
 class MWPMDecoder:
@@ -13,7 +12,7 @@ class MWPMDecoder:
     Minimum Weight Perfect Matching (MWPM) decoder for surface code syndrome data.
 
     This decoder uses PyMatching to construct a matching graph based on observed
-    detection events ("syndromes") from a quantum circuit, and predicts logical errors
+    detection events from a quantum circuit, and predicts logical errors
     by decoding these using MWPM. Weights can be computed from pairwise detection correlations
     or assumed uniform.
     """
@@ -49,52 +48,27 @@ class MWPMDecoder:
         Also computes a mask identifying trivial (all-zero) syndromes.
         """
         t0 = time.perf_counter()
-        self.syndromes, self.flips = self.sampler.load_jobdata()
+        # self.detections, self.flips = self.sampler.load_jobdata()
+        self.detections, self.flips = self.sampler.subsample_to(3)
 
-        self.nontrivial_mask = np.any(self.syndromes, axis=1)
-        self.total_shots = self.syndromes.shape[0]
+        self.nontrivial_mask = np.any(self.detections, axis=1)
+        self.total_shots = self.detections.shape[0]
         trivial_share = np.mean(~self.nontrivial_mask)
 
         print(f"Loaded data '{self.sampler.filename}' (d={self.distance}, t={self.t}) "
               f"with {self.total_shots} shots ({trivial_share*100:.1f}% trivial) "
               f"in {time.perf_counter() - t0:.2f}s.")
-
-    def _error_correlation_matrix_simple(self) -> np.ndarray:
-        """
-        Compute the error correlation matrix from the observed syndromes.
-
-        Returns
-        -------
-        correlation_matrix : np.ndarray
-            A (N, N) matrix of normalized correlation coefficients between detector events.
-            Diagonal elements are set to zero.
-        """
-        # Marginal detection probabilities for each detector
-        marginal_probs = self.syndromes.mean(axis=0)
-
-        # Joint detection probabilities
-        joint_probs = (self.syndromes[:, :, None] * self.syndromes[:, None, :]).mean(axis=0)
-
-        # Compute normalized correlations
-        denom = np.outer(1 - 2 * marginal_probs, 1 - 2 * marginal_probs)
-        numer = joint_probs - np.outer(marginal_probs, marginal_probs)
-
-        with np.errstate(divide='ignore', invalid='ignore'):
-            correlation_matrix = np.where(denom != 0, numer / denom, np.inf)
-
-        np.fill_diagonal(correlation_matrix, 0.0)
-        return correlation_matrix
     
     def _error_correlation_matrix_full(self) -> np.ndarray:
         """
-        Compute the full correlation matrix from the observed syndromes.
+        Compute the full correlation matrix from the observed detections.
 
         Returns
         -------
         pij_matrix : np.ndarray
             A symmetric matrix of error-pairing probabilities between detector events.
         """
-        x = self.syndromes.astype(np.float64)  # shape (shots, N)
+        x = self.detections.astype(np.float64)  # shape (shots, N)
         N = x.shape[1]
 
         # Compute means
@@ -127,7 +101,7 @@ class MWPMDecoder:
 
         # Compute edge weights
         if self.weight_scheme == 'p_ij':
-            error_correlation = self._error_correlation_matrix_simple()
+            error_correlation = self._error_correlation_matrix_full()
             error_correlation[error_correlation <= 0] = 1e-7  # Avoid log(0) or negative weights
             weights = -np.log(error_correlation)
         elif self.weight_scheme == 'uniform':
@@ -182,26 +156,24 @@ class MWPMDecoder:
         logical_accuracy : float
             Logical decoding accuracy, including both trivial and non-trivial shots.
         """
-        total_samples = self.syndromes.shape[0]
-        val_count = int(self.validation_ratio * total_samples)
-        train_count = total_samples - val_count
 
-        train_set, val_set = random_split(
-            self.syndromes,
-            [train_count, val_count],
-            generator=torch.Generator().manual_seed(42)
-        )
+        num_total = self.detections.shape[0]
+        self.val_size = int(num_total * self.validation_ratio)
 
-        val_syndromes = self.syndromes[val_set.indices]
-        val_flips = self.flips[val_set.indices]
+        rng = np.random.default_rng(42)
+        perm = rng.permutation(num_total)
+
+        # Indexera direkt med permuteringen
+        val_idx = perm[:self.val_size]
+        val_detections, val_flips = self.detections[val_idx], self.flips[val_idx]
 
         # Filter out trivial syndromes
-        nontrivial = np.any(val_syndromes, axis=1)
-        syndromes_nt = val_syndromes[nontrivial]
+        nontrivial = np.any(val_detections, axis=1)
+        detections_nt = val_detections[nontrivial]
         flips_nt = val_flips[nontrivial]
 
         # Decode predictions using MWPM
-        predictions = self.matcher.decode_batch(syndromes_nt)
+        predictions = self.matcher.decode_batch(detections_nt)
 
         actual = flips_nt[:, -1]
         predicted = predictions[:, 0]
@@ -209,9 +181,10 @@ class MWPMDecoder:
         trivial_count = np.sum(~nontrivial)
 
         # Logical accuracy over all validation samples
-        print("Non-trivial accuracy:", correct/predicted.shape[0])
-        logical_accuracy = (correct + trivial_count) / val_count
-        return logical_accuracy
+        print("Accuracy (excluding trivial syndromes):", correct/predicted.shape[0])
+        logical_accuracy = (correct + trivial_count) / self.val_size
+        logical_accuracy_err = standard_deviation(logical_accuracy, self.val_size)
+        return logical_accuracy, logical_accuracy_err
 
     def decode(self) -> float:
         """
@@ -228,7 +201,7 @@ class MWPMDecoder:
 
 
 if __name__ == "__main__":
-    args = Args(t=[101], distance=3, sliding=True, dt=2, simulator_backend=True)
-    decoder = MWPMDecoder(args, weight_scheme="p_ij")
-    accuracy = decoder.decode()
-    print(f"Decoder completed with logical accuracy: {accuracy:.3f}")
+    args = Args(t=[10], distance=25, simulator_backend=False)
+    decoder = MWPMDecoder(args, weight_scheme="uniform")
+    logical_accuracy, logical_accuracy_err = decoder.decode()
+    print(f"Decoder completed with logical accuracy: {logical_accuracy:.3f}")
