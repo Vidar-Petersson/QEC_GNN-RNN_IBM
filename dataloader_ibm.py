@@ -92,7 +92,7 @@ class IBMSampler:
                 final_state.extend([final] * freq)
         else:
             data = data[0]  # Experimental jobs are returned as a list
-            syndromes = data.data.syndrome.get_bitstrings()
+            syndromes = data.data.syndromes.get_bitstrings()
             if hasattr(data.data, "middle_states"):
                 middle_states = data.data.middle_states.get_bitstrings()
             else:
@@ -177,14 +177,71 @@ class IBMSampler:
 
         return detection_events, logical_flips
     
+    def subsample_to(self, target_distance: int) -> Tuple[np.ndarray, np.ndarray]:
+        """
+        Subsample detection events and logical flips from the current code distance
+        down to a smaller target_distance by sliding a window of physical qubits.
+        All possible contiguous subcodes of width target_distance are extracted and
+        concatenated vertically.
+
+        Args:
+            target_distance (int): Desired smaller code distance (must be < self.distance).
+
+        Returns:
+            sub_detection_events (np.ndarray): Concatenated detection events for each
+                subcode, shape ((num_windows*shots), target_ancillas*(t-1)).
+            sub_logical_flips (np.ndarray): Corresponding logical flip labels, tiled
+                for each subcode window, shape ((num_windows*shots), t).
+
+        Raises:
+            ValueError: If target_distance >= self.distance or data shape mismatch.
+        """
+        if target_distance >= self.distance:
+            raise ValueError(
+                f"Target distance {target_distance} must be smaller than current distance {self.distance}"
+            )
+
+        # Load full-distance data
+        det_full, flips_full = self.load_jobdata()
+        shots, total_events = det_full.shape
+        full_anc = self.distance - 1
+        target_anc = target_distance - 1
+
+        # Compute the number of time-step intervals (t-1)
+        steps = total_events // full_anc
+        if steps * full_anc != total_events:
+            raise ValueError(
+                f"Oväntad form på det_full: {total_events} inte delbart med ancillas {full_anc}"
+            )
+
+        # Reshape into (shots, steps, ancillas)
+        det_reshaped = det_full.reshape(shots, steps, full_anc)
+
+        # Slide window across physical qubit positions
+        subsampled_list = []
+        for start in range(full_anc - target_anc + 1):
+            window = det_reshaped[:, :, start : start + target_anc]
+            # Flatten back into 2D: (shots, target_anc*steps)
+            subsampled = window.reshape(shots, -1)
+            subsampled_list.append(subsampled)
+
+        # Concatenate all subcode windows vertically
+        sub_det = np.vstack(subsampled_list)
+        sub_flips = np.tile(flips_full, (len(subsampled_list), 1))
+
+        return sub_det, sub_flips
+    
     @staticmethod
     def _bitstrings_to_array(bitstrings: List[str]) -> np.ndarray:
         return np.frombuffer(''.join(bitstrings).encode(), dtype='S1').view(np.uint8).reshape(len(bitstrings), -1) - ord('0')
 
 
 if __name__ == "__main__":
-    sampler = IBMSampler(distance=3, t=6, simulator=True)
+    sampler = IBMSampler(distance=5, t=4, simulator=False)
     detection_events, observable_flips = sampler.load_jobdata()
+    print("Original detection events and logical flips shape:", detection_events.shape)
+    print("original Logical flips shape:", observable_flips.shape)
+    det3, flip3 = sampler.subsample_to(target_distance=3)
 
-    print("Detection events shape:", detection_events.shape)
-    print("Logical flips shape:", observable_flips.shape)
+    print("Subsampled shape:", det3.shape, flip3.shape)
+
