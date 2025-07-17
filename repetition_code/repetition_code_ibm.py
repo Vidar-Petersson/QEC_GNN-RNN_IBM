@@ -1,8 +1,10 @@
 import json
-from qiskit import transpile, QuantumCircuit, QuantumRegister, ClassicalRegister
-from qiskit_ibm_runtime import QiskitRuntimeService, RuntimeEncoder, SamplerV2 as Sampler, Batch
-from qiskit_aer import AerSimulator
 import numpy as np 
+
+from qiskit import transpile, QuantumCircuit, QuantumRegister, ClassicalRegister
+from qiskit.circuit import IfElseOp
+from qiskit_ibm_runtime import QiskitRuntimeService, RuntimeEncoder, SamplerV2 as Sampler, Batch
+from qiskit_aer import AerSimulator 
 
 class QuantumErrorCorrection:
     """
@@ -25,14 +27,15 @@ class QuantumErrorCorrection:
         self.angle_scale = angle_scale
 
         self.service = QiskitRuntimeService()
-        self.backend = self.service.backend("ibm_marrakesh")  # Specify backend
+        self.backend = self.service.backend("ibm_kingston")  # Specify backend
+        self.backend.target.add_instruction(IfElseOp, name="if_else")
         print("Connected to:", self.backend.name, "with distance:", self.code_distance, ", repetitions:", self.time_steps)
         
         # Register quantum and classical bits
         self.qreg_data = QuantumRegister(self.code_distance)  # Data qubits
         self.qreg_ancillas = QuantumRegister(self.num_qubits - self.code_distance)  # Measurement qubits
         self.creg_syndromes = ClassicalRegister(self.time_steps * (self.code_distance - 1), name="syndromes")  # Classical bits for syndrome data
-        self.creg_middle_states = ClassicalRegister(self.time_steps, name="middle_states")  # Classical bits for logical flag states
+        #self.creg_middle_states = ClassicalRegister(self.time_steps, name="middle_states")  # Classical bits for logical flag states
         self.creg_final_state = ClassicalRegister(self.code_distance, name="final_state")  # Classical bits for final measurements
         
         self.state_data = self.qreg_data[0]  # Initial logical state
@@ -40,7 +43,8 @@ class QuantumErrorCorrection:
     
     def build_qc(self) -> QuantumCircuit:
         """ Creates a quantum circuit with the registered qubits. """
-        return QuantumCircuit(self.qreg_data, self.qreg_ancillas, self.creg_syndromes, self.creg_middle_states, self.creg_final_state)
+        # return QuantumCircuit(self.qreg_data, self.qreg_ancillas, self.creg_syndromes, self.creg_middle_states, self.creg_final_state)
+        return QuantumCircuit(self.qreg_data, self.qreg_ancillas, self.creg_syndromes, self.creg_final_state)
     
     def initialize_qubits(self, circuit: QuantumCircuit) -> QuantumCircuit:
         """ Initializes qubits in a uniform superposition and entangles the redundant qubits. """
@@ -81,19 +85,20 @@ class QuantumErrorCorrection:
         circuit.barrier(*self.qreg_data, *self.qreg_ancillas)
 
         # Optional: middle flag from data qubit 0
-        circuit.h(self.qreg_data[0])
-        circuit.measure(self.qreg_data[0], self.creg_middle_states[time_repetition_idx])
-        circuit.h(self.qreg_data[0])
+        # circuit.h(self.qreg_data[0])
+        # circuit.measure(self.qreg_data[0], self.creg_middle_states[time_repetition_idx])
+        # circuit.h(self.qreg_data[0])
 
         # Reset ancillas to |0>
-        for i in range(self.code_distance - 1):
-            circuit.reset(self.qreg_ancillas[i])
+        # for i in range(self.code_distance - 1):
+        #     circuit.reset(self.qreg_ancillas[i])
 
         # Conditional X to reset ancillas to |0>
-        # for i in range(self.code_distance - 1):
-        #     with circuit.if_test((self.creg_syndromes[offset + i], 1)):
-        #         circuit.x(self.qreg_ancillas[i])
-        if self.angle_scale != 0:
+        for i in range(self.code_distance - 1):
+            with circuit.if_test((self.creg_syndromes[offset + i], 1)):
+                circuit.x(self.qreg_ancillas[i])
+
+        if self.angle_scale > 0:
             self.inject_small_rotation_error(circuit, self.qreg_data, self.angle_scale)
         
         circuit.barrier(*self.qreg_data, *self.qreg_ancillas)
@@ -108,7 +113,8 @@ class QuantumErrorCorrection:
             :param max_angle: Maximum rotation angle in radians (default: pi/50 ≈ 0.063)
             """
             # Draw a small rotation angle from a normal distribution centered at 0
-            theta = np.random.normal(loc=0, scale=angle_scale)
+            rng = np.random.default_rng(12345)
+            theta = rng.normal(loc=0, scale=angle_scale)
 
             # Sample a random unit vector on the Bloch sphere (uniformly)
             phi = 2 * np.pi * np.random.rand()
@@ -139,20 +145,18 @@ class QuantumErrorCorrection:
         return circuit
     
     def optimize_circuit(self, circuit: QuantumCircuit) -> QuantumCircuit:
-        # # Example: choose physical qubit layout (must match the hardware!)
-        # layout = {self.qreg_data[i]: i+6 for i in range(self.code_distance)}
-        # ancilla_offset = self.code_distance
-        # for i in range(self.num_qubits - self.code_distance):
-        #     layout[self.qreg_ancillas[i]] = ancilla_offset + i +6
+        # Example: choose physical qubit layout (must match the hardware!)
+        layout = {self.qreg_data[i]: i for i in range(self.code_distance)}
+        
+        for i in range(self.num_qubits - self.code_distance):
+            layout[self.qreg_ancillas[i]] = self.code_distance + i
 
-        # transpiled = transpile(circuit, backend=self.backend,
-        #                     #initial_layout=layout,
-        #                     optimization_level=2,
-        #                     seed_transpiler=42)
-        # return transpiled
-
-        """ Optimizes the circuit to reduce the number of gates. """
-        transpiled = transpile(circuit, backend=self.backend, optimization_level=2, seed_transpiler=42)
+        transpiled = transpile(circuit, backend=self.backend,
+                            initial_layout=layout,
+                            # routing_method='none',
+                            layout_method='trivial',
+                            optimization_level=1,
+                            seed_transpiler=42)
         return transpiled
     
     def execute(self) -> object:
@@ -165,7 +169,7 @@ class QuantumErrorCorrection:
             job = simulator.run(transpiled_circuit, shots=self.shots, seed_simulator=42)
             result = job.result()
             
-            filename = f"./jobdata/aer/{job.job_id()}_{self.code_distance}_{self.time_steps}_{self.shots}_{self.initial_state}_{self.angle_scale}.json"
+            filename = f"./jobdata/aer/{job.job_id()}_{self.code_distance}_{self.time_steps}_{self.shots}_{self.initial_state}.json"
             with open(filename, "w") as file:
                 json.dump(result, file, cls=RuntimeEncoder)
             
@@ -174,9 +178,10 @@ class QuantumErrorCorrection:
         else:
             # Run on a real IBM backend
             sampler = Sampler(self.backend)
+            sampler.options.experimental = {"execution_path" : "gen3-experimental"}
             job = sampler.run([transpiled_circuit], shots=self.shots)
             result = job.result()
-            filename = f"./jobdata/ibm/{job.job_id()}_{self.code_distance}_{self.time_steps}_{self.shots}_{self.initial_state}_{self.angle_scale}.json"
+            filename = f"./jobdata/ibm/testdata/{job.job_id()}_{self.code_distance}_{self.time_steps}_{self.shots}_{self.initial_state}.json"
 
             with open(filename, "w") as file:
                 json.dump(result, file, cls=RuntimeEncoder)
@@ -217,5 +222,5 @@ class QuantumErrorCorrection:
         return results
 
 if __name__ == "__main__":
-    qec = QuantumErrorCorrection(code_distance=3, time_steps=5, shots=10_000_000, initial_state=0, simulator=True, angle_scale=0)
+    qec = QuantumErrorCorrection(code_distance=25, time_steps=9, shots=500_000, initial_state=0, simulator=False, angle_scale=0)
     qec.execute()
