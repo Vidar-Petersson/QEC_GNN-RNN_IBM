@@ -21,21 +21,31 @@ os.environ["WANDB_SILENT"] = "True"
 
 class GRUDecoder(nn.Module):
     """
-    A QEC decoder combining a GNN and an RNN.
+    A quantum error correction decoder combining a Graph Neural Network (GNN)
+    for spatial feature extraction and a GRU recurrent network for temporal processing.
+
+    Attributes:
+        args (Args): Configuration and hyperparameters.
+        embedding (nn.ModuleList): Layers for graph convolutional embeddings.
+        rnn (nn.GRU): GRU network for sequence modeling.
+        decoder (nn.Sequential): Linear+Sigmoid for binary output.
     """
     def __init__(self, args: Args):
         super().__init__()
         self.args = args
         
+        # Build graph embedding layers
         features = list(zip(args.embedding_features[:-1], args.embedding_features[1:]))
         self.embedding =  nn.ModuleList([GraphConvLayer(a, b) for a, b in features])
 
+        # GRU for temporal sequence
         self.rnn = nn.GRU(
             args.embedding_features[-1],
             args.hidden_size, num_layers=args.n_gru_layers,
             batch_first=True
         )
 
+        # Final decoder head
         self.decoder = nn.Sequential(
             nn.Linear(args.hidden_size, 1),
             nn.Sigmoid()
@@ -90,7 +100,6 @@ class GRUDecoder(nn.Module):
         scheduler = LambdaLR(optim, lr_lambda=schedule)
 
         # Early stopping setup
-        patience = self.args.patience
         best_val_acc = 0
         no_improve = 0
 
@@ -213,7 +222,7 @@ class GRUDecoder(nn.Module):
                 logger.on_epoch_end(logs=metrics)
 
             # Early stopping & checkpointing
-            if epoch_val_acc < best_val_acc:
+            if epoch_val_acc > best_val_acc:
                 best_val_acc = epoch_val_acc
                 no_improve = 0
                 if save:
@@ -222,34 +231,74 @@ class GRUDecoder(nn.Module):
                     print(f"Saved new best model (log.acc.={epoch_val_log_acc:.5f} loss={epoch_val_loss}) at epoch {i} → {ckpt_path}")
             else:
                 no_improve += 1
-                if no_improve >= patience:
-                    print(f"Early stopping triggered: no improvement in {patience} epochs.")
+                if no_improve >= self.args.patience:
+                    print(f"Early stopping triggered: no accuracy improvement in {self.args.patience} epochs.")
                     break
         
 
         if local_log:
             logger.on_training_end()
 
+    
+    def test_model(self) -> tuple:
+        """
+        Utvärderar modellen på test‐datasetet genom att loopa igenom alla batches
+        och beräkna genomsnittlig loss och accuracy. Mäter även tidsåtgång för data
+        och modell. Loggar resultat till wandb och/eller lokal logger om angivet.
+        """
 
-    def test_model(self, dataset: GraphCreator, n_iter=1000, verbose=True):
-        """
-        Evaluates the model by feeding n_iter batches to the decoder and 
-        calculating the mean and standard deviation of the accuracy. 
-        """
+        # Skapa dataset och batches
+        # Antingen återanvänd GraphCreator om du vill ny split, eller ta in dataset som parameter
+        gc = GraphCreator(self.args)
+        gc.train_val_split()  # För att säkerställa samma split‐logik
+          # Hämta test-batches
+        test_batches = gc.generate_batches(mode="validation")
+
         self.eval()
-        accuracy_list = torch.zeros(n_iter)
-        data_time, model_time = 0, 0
-        for i in tqdm(range(n_iter), disable=not verbose):
-            t0 = time.perf_counter()
-            x, edge_index, batch_labels, label_map, edge_attr, aligned_flips, lengths, last_label = dataset.generate_batch()
-            t1 = time.perf_counter() 
-            out, final_prediction = self.forward(x, edge_index, edge_attr, batch_labels, label_map)
-            t2 = time.perf_counter()
-            accuracy_list[i] = (torch.sum(torch.round(final_prediction) == last_label) / torch.numel(last_label)).item()
-            data_time += t1 - t0
-            model_time += t2 - t1
-        accuracy = accuracy_list.mean()
-        std = standard_deviation(accuracy, n_iter * dataset.batch_size)
-        if verbose:
-            print(f"Accuracy: {accuracy:.4f}, data time = {data_time:.3f}, model time = {model_time:.3f}")
-        return accuracy, std
+        total_loss = 0.0
+        total_correct = 0
+        total_elements = 0
+        data_time = 0.0
+        model_time = 0.0
+
+        with torch.no_grad():
+            for batch in tqdm(test_batches):
+                t0 = time.perf_counter()
+                x, edge_index, batch_labels, label_map, edge_attr, aligned_flips, lengths, last_label = batch
+                t1 = time.perf_counter()
+
+                out, final_pred = self.forward(x, edge_index, edge_attr, batch_labels, label_map)
+                t2 = time.perf_counter()
+
+                if self.args.train_all_times:
+                    mask = torch.arange(out.size(1), device=out.device)[None, :] < lengths[:, None]
+                    loss_raw = nn.functional.binary_cross_entropy(out, aligned_flips, reduction='none')
+                    loss = (loss_raw * mask).sum() / mask.sum()
+                else:
+                    loss = nn.functional.binary_cross_entropy(final_pred, last_label)
+
+                total_loss += loss.item()
+                correct = torch.sum(torch.round(final_pred) == last_label).item()
+                total_correct += correct
+                total_elements += last_label.numel()
+
+                data_time += (t1 - t0)
+                model_time += (t2 - t1)
+
+        # Beräkna physical accuracy
+        avg_loss = total_loss / len(test_batches)
+        physical_acc = total_correct / total_elements
+
+        # Beräkna logical accuracy (inkluderar trivial-errors från GraphCreator)
+        # Antar att dataset har attribut test_num_trivial och test_size
+        logical_acc = (total_correct + gc.val_num_trivial) / gc.val_size
+
+        # Skriv ut resultat
+        print(
+            f"Test Result → Loss: {avg_loss:.4f}, "
+            f"Physical Acc: {physical_acc:.4f}, "
+            f"Logical Acc: {logical_acc:.4f} "
+            f"(data_time={data_time:.3f}s, model_time={model_time:.3f}s)"
+        )
+
+        return avg_loss, physical_acc, logical_acc
