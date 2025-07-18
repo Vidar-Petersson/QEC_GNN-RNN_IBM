@@ -147,24 +147,26 @@ class IBMSampler:
         flips = np.diff(reshaped, axis=1).astype(bool)
         return flips.reshape(flips.shape[0], -1)
 
-    def _extract_logical_flips(self, middle_states: List[str], final_state: List[str]) -> np.ndarray:
+    def _extract_logical_flips(self, middle_states: List[str], final_state: List[str], logical_index: int = 0) -> np.ndarray:
         """
         Extracts the final logical state as binary classification.
         Returns:
             np.ndarray: Boolean array of shape (shots, t), with flip at last time step.
         """
         if middle_states is None:
-            diff_parity = np.array([s[0] == "1" for s in final_state]) # 0/1 klassning
+            diff_parity = np.array([fs[logical_index] == "1" for fs in final_state]) # 0/1 klassning
             matrix = np.zeros((len(diff_parity), self.t), dtype=bool)
             matrix[:, -1] = diff_parity
             return matrix
     
-        else:
+        else: # TODO: Measure middle states at all qubits in order to be able to subsample correctly
+            raise NotImplementedError
+            logical_sequences = [ms + fs[logical_index] for ms, fs in zip(middle_states, final_state)]
             logical_states = [a + b for a, b in zip(middle_states, [s[0] for s in final_state])]
             logical_flips = self._bitstrings_to_array(logical_states).astype(bool)
             return logical_flips
 
-    def load_jobdata(self) -> Tuple[np.ndarray, np.ndarray]:
+    def load_jobdata(self, subsample_to: None | int = False) -> Tuple[np.ndarray, np.ndarray]:
         """
         Main entry point: loads detection events and logical flip labels.
         Returns:
@@ -173,11 +175,15 @@ class IBMSampler:
         syndromes, middle_states, final_state = self._load_json()
         syndrome_matrix = self._get_syndrome_matrix(syndromes, final_state)
         detection_events = self._extract_detection_events(syndrome_matrix)
-        logical_flips = self._extract_logical_flips(middle_states, final_state)
+
+        if subsample_to != False:
+            detection_events, logical_flips = self.subsampler(detection_events, middle_states, final_state, subsample_to)
+        else:
+            logical_flips = self._extract_logical_flips(middle_states, final_state, 0)
 
         return detection_events, logical_flips
     
-    def subsample_to(self, target_distance: int) -> Tuple[np.ndarray, np.ndarray]:
+    def subsampler(self, det_full, middle_full, final_full, target_distance: int) -> Tuple[np.ndarray, np.ndarray]:
         """
         Subsample detection events and logical flips from the current code distance
         down to a smaller target_distance by sliding a window of physical qubits.
@@ -202,32 +208,35 @@ class IBMSampler:
             )
 
         # Load full-distance data
-        det_full, flips_full = self.load_jobdata()
         shots, total_events = det_full.shape
         full_anc = self.distance - 1
         target_anc = target_distance - 1
 
         # Compute the number of time-step intervals (t-1)
         steps = total_events // full_anc
-        if steps * full_anc != total_events:
-            raise ValueError(
-                f"Oväntad form på det_full: {total_events} inte delbart med ancillas {full_anc}"
-            )
 
         # Reshape into (shots, steps, ancillas)
         det_reshaped = det_full.reshape(shots, steps, full_anc)
 
         # Slide window across physical qubit positions
-        subsampled_list = []
-        for start in range(full_anc - target_anc + 1):
-            window = det_reshaped[:, :, start : start + target_anc]
-            # Flatten back into 2D: (shots, target_anc*steps)
-            subsampled = window.reshape(shots, -1)
-            subsampled_list.append(subsampled)
+        subsampled_dets = []
+        subsampled_flips = []
 
-        # Concatenate all subcode windows vertically
-        sub_det = np.vstack(subsampled_list)
-        sub_flips = np.tile(flips_full, (len(subsampled_list), 1))
+        for start in range(full_anc - target_anc + 1):
+            # subsampla detektoreventen
+            window = det_reshaped[:, :, start : start + target_anc]
+            subsampled_dets.append(window.reshape(shots, -1))
+
+            # hämta logiska flips för just den qubiten
+            flips_for_window = self._extract_logical_flips(
+                middle_full,
+                final_full,
+                logical_index=start
+            )
+            subsampled_flips.append(flips_for_window)
+
+        sub_det = np.vstack(subsampled_dets)
+        sub_flips = np.vstack(subsampled_flips)
 
         return sub_det, sub_flips
     
@@ -237,11 +246,10 @@ class IBMSampler:
 
 
 if __name__ == "__main__":
-    sampler = IBMSampler(distance=5, t=4, simulator=False)
-    detection_events, observable_flips = sampler.load_jobdata()
+    import time
+    t0 = time.perf_counter()
+    sampler = IBMSampler(distance=5, t=6, simulator=False)
+    detection_events, observable_flips = sampler.load_jobdata(subsample_to=3)
+    print("Time: ", time.perf_counter()-t0)
     print("Original detection events and logical flips shape:", detection_events.shape)
     print("original Logical flips shape:", observable_flips.shape)
-    det3, flip3 = sampler.subsample_to(target_distance=3)
-
-    print("Subsampled shape:", det3.shape, flip3.shape)
-
