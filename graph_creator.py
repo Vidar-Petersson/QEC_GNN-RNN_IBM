@@ -5,6 +5,7 @@ import time
 from args import Args
 from torch_geometric.nn.pool import knn_graph
 from dataloader_ibm import IBMSampler
+from data_analysis.data_characteristics import *
 
 class GraphCreator:
     """
@@ -33,17 +34,13 @@ class GraphCreator:
         trivial_syndrome_mask = np.any(self.detections, axis=1) # Mask for trivial syndromes where no detection event happend
         t1 = time.perf_counter()
         print(f"Loaded IBM jobdata {self.filename} (d={self.distance}, t={self.t}) with {self.detections.shape[0]} shots ({np.mean(~trivial_syndrome_mask)*100:.1f}% trivial) in {t1-t0:.2f} s.")
-
-        self.detector_coordinates = self._generate_detector_coordinates(self.distance, self.t)
-        self.stabilizer_mask = np.ones((1, self.distance-1), dtype=np.uint8) # Mask for type of stabiliser, not exactly needed for the repetition code
-        
+    
     @staticmethod
     def _generate_detector_coordinates(d, t):
         d -= 1
-        col0 = np.tile(np.arange(d), t)
-        col1 = np.zeros(d * t, dtype=np.int64)
-        col2 = np.repeat(np.arange(t), d)
-        return np.stack((col0, col1, col2), axis=1)
+        x = np.tile(np.arange(d), t)            # shape: [d*t]
+        times = np.repeat(np.arange(t), d)      # shape: [d*t]
+        return np.stack((x, times), axis=1)     # shape: [d*t, 2]
 
     def get_sliding_window(self, node_features: list[np.ndarray], sampler_t: int
                         ) -> tuple[list[np.ndarray], np.ndarray]:
@@ -96,7 +93,7 @@ class GraphCreator:
         return updated_node_features, np.concatenate(all_chunk_labels)
 
 
-    def get_node_features(self, detections: np.ndarray) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    def get_node_features(self, detections: np.ndarray):
         """
         Converts detection event indices into physical node features and assigns 
         them to batch and chunk labels, optionally applying a sliding window.
@@ -107,45 +104,31 @@ class GraphCreator:
                 whether a detection event occurred at a given space-time location.
 
         Returns:
-            node_features: ndarray of shape [n, 5] where each row is (x, y, t, type_x, type_z).
-                - x, y, t: spatial and temporal position of a detection event
-                - type_x, type_z: one-hot encoding of stabilizer type
+            node_features: ndarray of shape [n, 2] where each row is (x, t).
+                - x, t: spatial and temporal position of a detection event
             batch_labels: ndarray of shape [n], mapping each node to a batch element
             chunk_labels: ndarray of shape [n], mapping each node to a time chunk (graph)
         """
-
-        # Decode syndrome indices into (x, y, t) coordinates using precomputed detector layout
-        # Result: list of arrays, one per shot, each with shape [num_events_in_shot, 3]
-        node_features = [self.detector_coordinates[s] for s in detections]
+        self.detector_coordinates = self._generate_detector_coordinates(self.distance, self.t)
+        # Decode syndrome indices into (x, t) coordinates using precomputed detector layout
+        coords_list = [self.detector_coordinates[s] for s in detections]  # varje elem: [n_i, 2]
 
         if self.sliding:
-            # Total number of rounds used in this circuit
-            sampler_t = self.t
             # Apply a sliding window over time to divide events into overlapping chunks
             # Returns updated node_features with local time coordinates and chunk_labels
-            node_features, chunk_labels = self.get_sliding_window(node_features, sampler_t)
-        
+            coords_list, chunk_labels = self.get_sliding_window(coords_list, self.t)
+        else:
+            chunk_labels = np.concatenate([
+                coords[:, 1] // self.dt for coords in coords_list
+            ])
+            for coords in coords_list:
+                coords[:, 1] %= self.dt
+
         # Construct a batch_labels array that repeats batch indices according to number of events
         # Example: if shot 0 has 3 events and shot 1 has 5, this will be [0, 0, 0, 1, 1, 1, 1, 1]
-        batch_labels = np.repeat(np.arange(len(node_features)), [len(i) for i in node_features])
-
+        batch_labels = np.repeat(np.arange(len(coords_list)), [len(c) for c in coords_list])
         # Combine all node features into a single array [total_nodes, 3]
-        node_features = np.vstack(node_features)
-        
-        if not self.sliding:
-            # If sliding window is not used, manually compute chunk index and local time:
-            #   - chunk = t // dt
-            #   - local_t = t % dt
-            chunk_labels = node_features[:, -1] // self.dt
-            node_features[:, -1] = node_features[:, -1] % self.dt
-
-        # Determine stabilizer type at each (x, y) coordinate using the precomputed mask
-        stabilizer_type = self.stabilizer_mask[node_features[:, 1], node_features[:, 0]] == 3
-        stabilizer_type = stabilizer_type[:, np.newaxis]  # Shape: [n, 1]
-
-        # Add one-hot stabilizer type to feature vector: [x, y, t, is_Z, is_X]
-        node_features = np.hstack((node_features, stabilizer_type, ~stabilizer_type)).astype(np.float32) # Ta bort stabilisatortypen i framtiden för att minska antalet element per nod
-
+        node_features = np.vstack(coords_list).astype(np.float32)  # shape [N,2]
         return node_features, batch_labels, chunk_labels
 
     
@@ -164,11 +147,6 @@ class GraphCreator:
 
         # OBS: node_features should already be on GPU when passed in!
         edge_index = knn_graph(node_features, k=self.k, batch=labels, loop=False)
-
-        # delta = node_features[edge_index[1]] - node_features[edge_index[0]]
-        # edge_attr = torch.max(torch.abs(delta), dim=1).values if self.norm == float('inf') \
-        #             else torch.linalg.norm(delta, ord=self.norm, dim=1)
-        # edge_attr = 1 / (edge_attr ** 2 + 1e-10)  # Epsilon för stabilitet
 
         row, col = edge_index  # shape: [num_edges]
         diffs = node_features[row] - node_features[col]  # shape: [num_edges, dim]
@@ -257,20 +235,12 @@ class GraphCreator:
 
         self.val_num_trivial = np.sum(~val_triv_syndrome_mask)
 
+    def print_info(self):
+        print("--------------------")
         print(f"Train/val-split: {self.train_detections.shape[0]} / {self.val_detections.shape[0]}")
-        self.analyze_class_balance(self.train_flips, self.val_flips)
-
-
-    def analyze_class_balance(self, train_flips, val_flips):
-        # Summera antalet 1:or och 0:or totalt
-        train_ones = np.sum(train_flips)
-        train_zeros = train_flips.size - train_ones
-        val_ones = np.sum(val_flips)
-        val_zeros = val_flips.size - val_ones
-
-        print("Klassfördelning:")
-        print(f"  [Träning]     1: {train_ones}   0: {train_zeros}   Andel 1: {train_ones / train_flips.size:.3f}")
-        print(f"  [Validering]  1: {val_ones}   0: {val_zeros}   Andel 1: {val_ones / val_flips.size:.3f}")
+        analyze_class_balance(self.train_flips, self.val_flips)
+        analyze_pdet_time(self.detections)
+        print("--------------------")
 
     def generate_batches(self, mode: str = "validation"):
         """
@@ -306,8 +276,8 @@ class GraphCreator:
         flips = torch.cat([flips, last_label], dim=1)  # shape [B, g]
 
 
-        #for i in tqdm(range(0, num_total, batch_size), desc=f"Generating {mode} batches"):
-        for i in range(0, num_total, batch_size):
+        for i in tqdm(range(0, num_total, batch_size), desc=f"Generating {mode} batches"):
+        # for i in range(0, num_total, batch_size):
             synd_batch = detections[i:i+batch_size]
             flips_batch = flips[i:i+batch_size]
 
@@ -347,12 +317,16 @@ class GraphCreator:
                 lengths,
                 last_label_batch
             ))
+            # valfri checkpoint:
+            if (i // batch_size) % 10 == 0:
+                print(torch.cuda.max_memory_allocated() / 1024**3, "GB")
 
         return all_batches 
 
 if __name__ == "__main__":
-    args = Args(t=[6], distance=3, sliding=True, dt=2, simulator_backend=True)
+    args = Args(t=[6], distance=3, sliding=True, dt=2, simulator_backend=False)
     gc = GraphCreator(args)
     gc.train_val_split()
+    gc.print_info()
     train_batches = gc.generate_batches(mode="training")
     print(f"Generated {len(train_batches)} training batches of size {args.batch_size}")
