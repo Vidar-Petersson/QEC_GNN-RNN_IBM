@@ -26,15 +26,9 @@ class GraphCreator:
         self.simulator = args.simulator_backend
         self.val_fraction = args.val_fraction
         
-        t0 = time.perf_counter() 
-        self.IBMSampler = IBMSampler(distance=self.distance, t=self.t, simulator=self.simulator)
-        self.detections, self.flips = self.IBMSampler.load_jobdata() # Includes trivial syndromes, size as original file
-        self.filename = self.IBMSampler.filename
-        
-        trivial_syndrome_mask = np.any(self.detections, axis=1) # Mask for trivial syndromes where no detection event happend
-        t1 = time.perf_counter()
-        print(f"Loaded IBM jobdata {self.filename} (d={self.distance}, t={self.t}) with {self.detections.shape[0]} shots ({np.mean(~trivial_syndrome_mask)*100:.1f}% trivial) in {t1-t0:.2f} s.")
-    
+        self.IBMSampler = IBMSampler(args)
+        self.detections, self.flips = self.IBMSampler.load_jobdata(verbose=True) # Includes trivial syndromes, size as original file
+
     @staticmethod
     def _generate_detector_coordinates(d, t):
         d -= 1
@@ -145,7 +139,6 @@ class GraphCreator:
             edge_attr: [num_edges]
         """
 
-        # OBS: node_features should already be on GPU when passed in!
         edge_index = knn_graph(node_features, k=self.k, batch=labels, loop=False)
 
         row, col = edge_index  # shape: [num_edges]
@@ -202,11 +195,11 @@ class GraphCreator:
         # Compute the position of each chunk within its batch using a range per group
         _, counts = batch_idx.unique_consecutive(return_counts=True)
         pos_in_batch = torch.cat([
-            torch.arange(c, device=self.device) for c in counts
+            torch.arange(c) for c in counts
         ])
 
         # Create the output tensor and place the flip labels at the correct position
-        aligned_flips = torch.zeros(B, max_len, device=self.device)
+        aligned_flips = torch.zeros(B, max_len)
         aligned_flips[batch_idx, pos_in_batch] = flips_full[batch_idx, chunk_idx]
 
         return aligned_flips, lengths  # lengths can be used for masking later
@@ -242,7 +235,7 @@ class GraphCreator:
         analyze_pdet_time(self.detections)
         print("--------------------")
 
-    def generate_batches(self, mode: str = "validation"):
+    def generate_batches(self, mode: str = "training"):
         """
         Generates batches of graphs from the entire dataset, where each batch 
         contains self.batch_size datapoints (i.e., shots).
@@ -259,6 +252,8 @@ class GraphCreator:
         elif mode == "training":
             detections = self.train_detections
             flips = self.train_flips
+        else:
+            raise NotImplementedError
             
         all_batches = []
         perm = np.random.permutation(detections.shape[0])
@@ -267,10 +262,8 @@ class GraphCreator:
 
         num_total = detections.shape[0]
         batch_size = self.batch_size
-        
-        # Keep only labels at chunk boundaries (i.e., end of each chunk)
         flips = flips[:, self.dt - 1:]  # shape: [batch_size, g - 1], where g = t - dt + 2
-        flips = torch.from_numpy(flips).to(dtype=torch.float32, device=self.device)
+        flips = torch.from_numpy(flips).float()
         # Append the last label one more time to get [B, g]
         last_label = flips[:, -1:]  # shape [B, 1]
         flips = torch.cat([flips, last_label], dim=1)  # shape [B, g]
@@ -289,8 +282,8 @@ class GraphCreator:
             label_map = np.array(list(zip(batch_labels, chunk_labels)))
             label_map, counts = np.unique(label_map, axis=0, return_counts=True)
             labels = np.repeat(np.arange(counts.shape[0]), counts).astype(np.int64)
-            label_map = torch.from_numpy(label_map).long()
-            labels = torch.from_numpy(labels)
+            label_map = torch.from_numpy(label_map).long().float()
+            labels = torch.from_numpy(labels).to(node_features.device) # Ensure node_features and labels are on the same device for knn_graph
 
             # Extract graph edges and attributes
             edge_index, edge_attr = self.get_edges(node_features, labels)
@@ -299,15 +292,15 @@ class GraphCreator:
             aligned_flips, lengths = self.align_labels_to_outputs(label_map, flips_batch)
 
             # Move everything to the appropriate device
-            node_features = node_features.to(self.device)
-            labels = labels.to(self.device)
-            label_map = label_map.to(dtype=torch.float32, device=self.device)
-            edge_index = edge_index.to(self.device)
-            edge_attr = edge_attr.to(self.device)
-            lengths = lengths.to(self.device)
+            #node_features = node_features.to(self.device)
+            #labels = labels.to(self.device)
+            #label_map = label_map.to(dtype=torch.float32, device=self.device)
+            #edge_index = edge_index.to(self.device)
+            #edge_attr = edge_attr.to(self.device)
+            #lengths = lengths.to(self.device)
             last_label_batch = flips_batch[:, -1:]
 
-            all_batches.append((
+            yield (
                 node_features,
                 edge_index,
                 labels,
@@ -316,15 +309,14 @@ class GraphCreator:
                 aligned_flips,
                 lengths,
                 last_label_batch
-            ))
-            # valfri checkpoint:
-            if (i // batch_size) % 10 == 0:
-                print(torch.cuda.max_memory_allocated() / 1024**3, "GB")
+            )
 
-        return all_batches 
+        # print(torch.cuda.max_memory_allocated() / 1024**3, "GB")
+
+        # return all_batches 
 
 if __name__ == "__main__":
-    args = Args(t=[6], distance=3, sliding=True, dt=2, simulator_backend=False)
+    args = Args(t=[12], distance=3, sliding=True, dt=2, simulator_backend=False)
     gc = GraphCreator(args)
     gc.train_val_split()
     gc.print_info()

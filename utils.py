@@ -28,24 +28,25 @@ def load_checkpoint(self, path: str, optimizer=None, scheduler=None, resume: boo
         scheduler.load_state_dict(checkpoint['scheduler_state_dict'])
     return checkpoint['epoch']
 
-def generate_batches_async(gc, mode):
+def generate_batches_async(gc, mode: str, max_prefetch: int = 5):
     """
-    Asynchronously generates batches by calling gc.generate_batches(mode) in a background thread.
-
-    Returns:
-        - thread: The thread object performing the batch generation.
-        - get_batches: A function that blocks until the batches are ready and then returns them.
+    Returnerar en bakgrundstråd som fyller en kö med upp till `max_prefetch` CPU-batcher.
     """
-    q = Queue()
+    q = Queue(max_prefetch)
 
-    def _target():
-        result = gc.generate_batches(mode=mode)
-        q.put(result)
+    def _producer():
+        for batch in gc.generate_batches(mode):
+            q.put(batch)        # blockerar om kön är full
+        q.put(None)             # sentinel för "slut på data"
 
-    thread = Thread(target=_target)
+    thread = Thread(target=_producer, daemon=True)
     thread.start()
-    
-    return thread, lambda: q.get()
+
+    # En funktion att hämta nästa batch (blockerar vid tom kö)
+    def get_next_batch():
+        return q.get()
+
+    return thread, get_next_batch
 
 def group(x, label_map):
         """

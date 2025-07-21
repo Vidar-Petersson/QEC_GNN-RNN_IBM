@@ -19,6 +19,8 @@ from utils import (
 from graph_creator import GraphCreator
 os.environ["WANDB_SILENT"] = "True"
 
+import torch.cuda as cuda
+
 class GRUDecoder(nn.Module):
     """
     A quantum error correction decoder combining a Graph Neural Network (GNN)
@@ -118,32 +120,39 @@ class GRUDecoder(nn.Module):
                 print(f"Resuming training from epoch {start_epoch}")
         # -----------------------------------------------------------
 
-        validation_batches = gc.generate_batches(mode="validation")
+        validation_batches = list(gc.generate_batches(mode="validation"))
 
         # Starta första async-genereringen
-        thread, get_next_batches = generate_batches_async(gc, mode="training")
+        #thread, get_next_batches = generate_batches_async(gc, mode="training")
         
         for i in range(1, self.args.n_epochs + 1):
             if local_log:
                 logger.on_epoch_begin(i)
         
             epoch_train_loss, epoch_train_acc = 0.0, 0.0
+            num_train_batches = 0
             epoch_val_loss,   epoch_val_acc   = 0.0, 0.0
             epoch_val_log_acc_num = 0
             data_time, model_time = 0, 0
             
             self.train()
             t0 = time.perf_counter()
-            thread.join()
-            train_batches = get_next_batches()
+            #thread.join()
+            #train_batches = get_next_batches()
             # Starta batchgenerering för nästa epok parallellt
-            thread, get_next_batches = generate_batches_async(gc, mode="training")
+            thread, get_next_batch = generate_batches_async(gc, mode="training", max_prefetch=5)
             t1 = time.perf_counter()
             data_time = t1 - t0
-        
-            for batch in train_batches:
+
+            while True:
+                batch = get_next_batch()
+                if batch is None:       # sentinel: inga fler batcher
+                    break
+
+            # for batch in train_batches:
                 optim.zero_grad()
-    
+
+                batch = [t.to(self.args.device, non_blocking=True) for t in batch]
                 x, edge_index, batch_labels, label_map, edge_attr, aligned_flips, lengths, last_label = batch
                 # Forward pass through the model
                 # out has shape [B, g_actual], where:
@@ -177,6 +186,8 @@ class GRUDecoder(nn.Module):
                 # Statistics
                 epoch_train_loss += loss.item()
                 epoch_train_acc += (torch.sum(torch.round(final_prediction) == last_label) / torch.numel(last_label)).item()
+                num_train_batches += 1
+                print("Efter batch:", cuda.memory_allocated() / 1e9, "GB")
 
             model_time = time.perf_counter() - t1
 
@@ -184,6 +195,7 @@ class GRUDecoder(nn.Module):
             self.eval()
             with torch.no_grad():
                 for batch in validation_batches:
+                    batch = [t.to(self.args.device, non_blocking=True) for t in batch]
                     x, edge_index, batch_labels, label_map, edge_attr, aligned_flips, lengths, last_label = batch
                     out, final_prediction = self.forward(x, edge_index, edge_attr, batch_labels, label_map)
                     if self.args.train_all_times:
@@ -197,8 +209,8 @@ class GRUDecoder(nn.Module):
                     epoch_val_acc  += (torch.sum(torch.round(final_prediction) == last_label) / torch.numel(last_label)).item()
                     epoch_val_log_acc_num += torch.sum(torch.round(final_prediction) == last_label).item()
             
-            epoch_train_loss /= len(train_batches)
-            epoch_train_acc  /= len(train_batches)
+            epoch_train_loss /= num_train_batches
+            epoch_train_acc  /= num_train_batches
             epoch_val_loss   /= len(validation_batches)
             epoch_val_acc    /= len(validation_batches)
             epoch_val_log_acc = (epoch_val_log_acc_num + gc.val_num_trivial) / gc.val_size
@@ -235,6 +247,10 @@ class GRUDecoder(nn.Module):
                     print(f"Early stopping triggered: no accuracy improvement in {self.args.patience} epochs.")
                     break
         
+        
+
+            print("Max:", cuda.max_memory_allocated() / 1e9, "GB")
+            torch.cuda.empty_cache()
 
         if local_log:
             logger.on_training_end()
