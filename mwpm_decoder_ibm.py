@@ -1,4 +1,3 @@
-import time
 import numpy as np
 import pymatching
 
@@ -33,31 +32,18 @@ class MWPMDecoder:
         self.t = args.t[0] - 1  # Number of rounds minus one (for indexing)
         self.simulator_backend = args.simulator_backend
         self.validation_ratio = args.val_fraction
+        self.load_distance = args.load_distance
         self.weight_scheme = weight_scheme
 
         self.matcher = pymatching.Matching()
-        self.sampler = IBMSampler(
-            distance=self.distance,
-            t=self.t + 1,
-            simulator=self.simulator_backend
-        )
 
     def _load_job_data(self) -> None:
         """
         Load syndrome and logical flip data from the sampler.
         Also computes a mask identifying trivial (all-zero) syndromes.
         """
-        t0 = time.perf_counter()
-        # self.detections, self.flips = self.sampler.load_jobdata()
-        self.detections, self.flips = self.sampler.subsample_to(3)
-
-        self.nontrivial_mask = np.any(self.detections, axis=1)
-        self.total_shots = self.detections.shape[0]
-        trivial_share = np.mean(~self.nontrivial_mask)
-
-        print(f"Loaded data '{self.sampler.filename}' (d={self.distance}, t={self.t}) "
-              f"with {self.total_shots} shots ({trivial_share*100:.1f}% trivial) "
-              f"in {time.perf_counter() - t0:.2f}s.")
+        self.sampler = IBMSampler(self.args)
+        self.detections, self.flips = self.sampler.load_jobdata(verbose=True)
     
     def _error_correlation_matrix_full(self) -> np.ndarray:
         """
@@ -184,6 +170,7 @@ class MWPMDecoder:
         print("Accuracy (excluding trivial syndromes):", correct/predicted.shape[0])
         logical_accuracy = (correct + trivial_count) / self.val_size
         logical_accuracy_err = standard_deviation(logical_accuracy, self.val_size)
+
         return logical_accuracy, logical_accuracy_err
 
     def decode(self) -> float:
@@ -201,7 +188,7 @@ class MWPMDecoder:
 
 
 if __name__ == "__main__":
-    args = Args(t=[10], distance=25, simulator_backend=False)
-    decoder = MWPMDecoder(args, weight_scheme="uniform")
+    args = Args(t=[12], distance=3, simulator_backend=False)
+    decoder = MWPMDecoder(args, weight_scheme="p_ij")
     logical_accuracy, logical_accuracy_err = decoder.decode()
     print(f"Decoder completed with logical accuracy: {logical_accuracy:.3f}")
