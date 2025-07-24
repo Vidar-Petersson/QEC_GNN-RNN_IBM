@@ -86,10 +86,9 @@ class GRUDecoder(nn.Module):
 
     def train_model(self, logger: TrainingLogger | None = None, save: str | None = None) -> None:
         local_log = isinstance(logger, TrainingLogger)
-        best_model = self.state_dict()
 
         if self.args.log_wandb:
-            wandb.init(project="GNN-RNN-repetition_code", name = save, config = self.args)
+            wandb.init(project="GNN-RNN-repetition-code", name = save, config = self.args)
 
         if local_log:
             logger.on_training_begin(self.args)
@@ -105,7 +104,7 @@ class GRUDecoder(nn.Module):
         best_val_acc = 0
         no_improve = 0
 
-        # ----- NYTT: ladda pretrained eller återuppta träning -----
+        # ----- Ladda pretrained eller återuppta träning -----
         start_epoch = 1
         if self.args.pretrained_checkpoint:
             print(f"Loading pretrained weights from {self.args.pretrained_checkpoint}...")
@@ -120,10 +119,8 @@ class GRUDecoder(nn.Module):
                 print(f"Resuming training from epoch {start_epoch}")
         # -----------------------------------------------------------
 
-        validation_batches = list(gc.generate_batches(mode="validation"))
-
-        # Starta första async-genereringen
-        #thread, get_next_batches = generate_batches_async(gc, mode="training")
+        validation_batches = list(gc.generate_batches(mode="validation")) # Yield everything into list
+        validation_batches = [tuple(t.to(self.args.device) for t in batch) for batch in validation_batches] # Move all validation data to GPU
         
         for i in range(1, self.args.n_epochs + 1):
             if local_log:
@@ -137,8 +134,7 @@ class GRUDecoder(nn.Module):
             
             self.train()
             t0 = time.perf_counter()
-            #thread.join()
-            #train_batches = get_next_batches()
+
             # Starta batchgenerering för nästa epok parallellt
             thread, get_next_batch = generate_batches_async(gc, mode="training", max_prefetch=5)
             t1 = time.perf_counter()
@@ -154,12 +150,11 @@ class GRUDecoder(nn.Module):
 
                 batch = [t.to(self.args.device, non_blocking=True) for t in batch]
                 x, edge_index, batch_labels, label_map, edge_attr, aligned_flips, lengths, last_label = batch
-                # Forward pass through the model
-                # out has shape [B, g_actual], where:
+
+                # Forward pass through the model, out has shape [B, g_actual], where:
                 #   B = batch size
                 #   g_actual = maximum number of non-empty chunks in batch
                 # (can vary between batches, <= t - dt + 2)
-
                 out, final_prediction = self.forward(x, edge_index, edge_attr, batch_labels, label_map)
 
                 if self.args.train_all_times:
@@ -187,7 +182,7 @@ class GRUDecoder(nn.Module):
                 epoch_train_loss += loss.item()
                 epoch_train_acc += (torch.sum(torch.round(final_prediction) == last_label) / torch.numel(last_label)).item()
                 num_train_batches += 1
-                print("Efter batch:", cuda.memory_allocated() / 1e9, "GB")
+
 
             model_time = time.perf_counter() - t1
 
@@ -195,7 +190,6 @@ class GRUDecoder(nn.Module):
             self.eval()
             with torch.no_grad():
                 for batch in validation_batches:
-                    batch = [t.to(self.args.device, non_blocking=True) for t in batch]
                     x, edge_index, batch_labels, label_map, edge_attr, aligned_flips, lengths, last_label = batch
                     out, final_prediction = self.forward(x, edge_index, edge_attr, batch_labels, label_map)
                     if self.args.train_all_times:
@@ -247,10 +241,7 @@ class GRUDecoder(nn.Module):
                     print(f"Early stopping triggered: no accuracy improvement in {self.args.patience} epochs.")
                     break
         
-        
-
-            print("Max:", cuda.max_memory_allocated() / 1e9, "GB")
-            torch.cuda.empty_cache()
+            print("Efter batch:", cuda.memory_allocated() / 1e9, "GB")
 
         if local_log:
             logger.on_training_end()
@@ -262,6 +253,7 @@ class GRUDecoder(nn.Module):
         och beräkna genomsnittlig loss och accuracy. Mäter även tidsåtgång för data
         och modell. Loggar resultat till wandb och/eller lokal logger om angivet.
         """
+        # TODO ändra nedanstående så att det är kompatibelt med nya generatorn
 
         # Skapa dataset och batches
         # Antingen återanvänd GraphCreator om du vill ny split, eller ta in dataset som parameter
