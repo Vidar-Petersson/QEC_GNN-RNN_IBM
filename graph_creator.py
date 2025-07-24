@@ -28,6 +28,7 @@ class GraphCreator:
         
         self.IBMSampler = IBMSampler(args)
         self.detections, self.flips = self.IBMSampler.load_jobdata(verbose=True) # Includes trivial syndromes, size as original file
+        self.detector_coordinates = self._generate_detector_coordinates(self.distance, self.t)
 
     @staticmethod
     def _generate_detector_coordinates(d, t):
@@ -103,7 +104,6 @@ class GraphCreator:
             batch_labels: ndarray of shape [n], mapping each node to a batch element
             chunk_labels: ndarray of shape [n], mapping each node to a time chunk (graph)
         """
-        self.detector_coordinates = self._generate_detector_coordinates(self.distance, self.t)
         # Decode syndrome indices into (x, t) coordinates using precomputed detector layout
         coords_list = [self.detector_coordinates[s] for s in detections]  # varje elem: [n_i, 2]
 
@@ -255,7 +255,6 @@ class GraphCreator:
         else:
             raise NotImplementedError
             
-        all_batches = []
         perm = np.random.permutation(detections.shape[0])
         detections = detections[perm]
         flips = flips[perm]
@@ -269,8 +268,7 @@ class GraphCreator:
         flips = torch.cat([flips, last_label], dim=1)  # shape [B, g]
 
 
-        for i in tqdm(range(0, num_total, batch_size), desc=f"Generating {mode} batches"):
-        # for i in range(0, num_total, batch_size):
+        for i in tqdm(range(0, num_total, batch_size), desc=f"Generating {mode} batches", disable=True):
             synd_batch = detections[i:i+batch_size]
             flips_batch = flips[i:i+batch_size]
 
@@ -287,17 +285,8 @@ class GraphCreator:
 
             # Extract graph edges and attributes
             edge_index, edge_attr = self.get_edges(node_features, labels)
-
             # align labels with chunk indices: 
             aligned_flips, lengths = self.align_labels_to_outputs(label_map, flips_batch)
-
-            # Move everything to the appropriate device
-            #node_features = node_features.to(self.device)
-            #labels = labels.to(self.device)
-            #label_map = label_map.to(dtype=torch.float32, device=self.device)
-            #edge_index = edge_index.to(self.device)
-            #edge_attr = edge_attr.to(self.device)
-            #lengths = lengths.to(self.device)
             last_label_batch = flips_batch[:, -1:]
 
             yield (
@@ -311,12 +300,8 @@ class GraphCreator:
                 last_label_batch
             )
 
-        # print(torch.cuda.max_memory_allocated() / 1024**3, "GB")
-
-        # return all_batches 
-
 if __name__ == "__main__":
-    args = Args(t=[12], distance=3, sliding=True, dt=2, simulator_backend=False)
+    args = Args(t=[50], distance=25, sliding=True, dt=2, simulator_backend=False)
     gc = GraphCreator(args)
     gc.train_val_split()
     gc.print_info()
