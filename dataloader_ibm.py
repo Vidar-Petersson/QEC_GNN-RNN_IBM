@@ -9,7 +9,6 @@ import time
 from args import Args
 from qiskit_ibm_runtime import RuntimeDecoder
 
-
 class IBMSampler:
     """
     Loads detection events and logical flip outcomes from IBM or simulator JSON job data.
@@ -93,13 +92,39 @@ class IBMSampler:
                 final_state.extend([final] * freq)
         else:
             data = data[0]  # Experimental jobs are returned as a list
-            syndromes = data.data.syndromes.get_bitstrings()
-            if hasattr(data.data, "middle_states"):
-                middle_states = data.data.middle_states.get_bitstrings()
-            else:
-                middle_states = None
-                print("Warning: Jobdata doesn't include middle_states!")
-            final_state = data.data.final_state.get_bitstrings()
+
+            if len(data.data.keys()) > 4: #New repetition_code qiskit-qec
+                link_list = []
+                for name, reg in data.data.items():
+                    if name == "code_bit":
+                        final_state = reg.get_bitstrings()
+                        break
+                    link_list.append(reg.get_bitstrings())
+
+                syndromes = [' '.join(bits) for bits in zip(*reversed(link_list))]
+
+                # if there are no resets, results are cumulative and need to be separated
+                cumsyndlist = []
+                for synd in syndromes:
+                    cumsyn_list = synd.split(" ")
+                    syndrome_list = []
+                    for tt, cum_syn in enumerate(cumsyn_list[0:-1]):
+                        syn = ""
+                        for j in range(len(cum_syn)):
+                            syn += str(int(cumsyn_list[tt][j] != cumsyn_list[tt + 1][j]))
+                        syndrome_list.append(syn)
+                    syndrome_list.append(cumsyn_list[-1])
+                    cumsyndlist.append("".join(syndrome_list))
+                syndromes = cumsyndlist
+            else: # Old code
+                syndromes = data.data.syndromes.get_bitstrings()
+                final_state = data.data.final_state.get_bitstrings()
+
+        if hasattr(data.data, "middle_states"):
+            middle_states = data.data.middle_states.get_bitstrings()
+        else:
+            middle_states = None
+            print("Warning: Jobdata doesn't include middle_states!")
 
         # Reverse bit order to match IBM's convention
         syndromes = [s[::-1] for s in syndromes]
@@ -203,7 +228,6 @@ class IBMSampler:
 
         return detection_events, logical_flips
 
-    
     def subsampler(self, det_full: np.ndarray, logical_flips_all: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
         """
         Efficient subsampling of detection events and corresponding logical flips.
@@ -235,7 +259,12 @@ class IBMSampler:
         sub_det = np.vstack(subsampled_dets)
         sub_flips = np.vstack(subsampled_flips)
 
-        return sub_det[:100000], sub_flips[:100000]
+        if sub_det.shape[0] > 1000000: # Esnures maximum of 1 million shots per configuration
+            row_index = np.random.choice(sub_det.shape[0], size=100000, replace=False)
+            sub_det   = sub_det[row_index]
+            sub_flips = sub_flips[row_index]
+
+        return sub_det, sub_flips
     
     @staticmethod
     def _bitstrings_to_array(bitstrings: List[str]) -> np.ndarray:
@@ -243,7 +272,7 @@ class IBMSampler:
 
 
 if __name__ == "__main__":
-    args = Args(t=[6], distance=3, simulator_backend=False, load_distance=5)
+    args = Args(t=[12], distance=3, simulator_backend=False)
     sampler = IBMSampler(args)
     detection_events, observable_flips = sampler.load_jobdata(verbose=True)
     print("Original detection events and logical flips shape:", detection_events.shape)
