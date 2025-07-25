@@ -28,23 +28,33 @@ def load_checkpoint(self, path: str, optimizer=None, scheduler=None, resume: boo
         scheduler.load_state_dict(checkpoint['scheduler_state_dict'])
     return checkpoint['epoch']
 
-def generate_batches_async(gc, mode: str, max_prefetch: int = 5):
+def generate_batches_async(gc, mode: str, max_prefetch: int = 5, log_threshold: int = 3):
     """
     Returnerar en bakgrundstråd som fyller en kö med upp till `max_prefetch` CPU-batcher.
+    Loggar om kön är tom eller växer sig större än `log_threshold`.
     """
     q = Queue(max_prefetch)
 
     def _producer():
         for batch in gc.generate_batches(mode):
-            q.put(batch)        # blockerar om kön är full
-        q.put(None)             # sentinel för "slut på data"
+            q.put(batch)  # blockerar om kön är full
+            # Logga om kön börjar bli för full
+            if q.qsize() > log_threshold:
+                print(f"Prefetch queue size = {q.qsize()}. Training is slower than generation?")
+        # När alla batcher är producerade, skicka en sentinel
+        q.put(None)
 
     thread = Thread(target=_producer, daemon=True)
     thread.start()
 
-    # En funktion att hämta nästa batch (blockerar vid tom kö)
     def get_next_batch():
-        return q.get()
+        batch = q.get()  # blockerar om kön är tom
+        # Logga om vi behöver vänta på produktion
+        if batch is None:
+            return None
+        if q.qsize() == 0:
+            print("Prefetch queue empty. Waiting for next batch generation…")
+        return batch
 
     return thread, get_next_batch
 
