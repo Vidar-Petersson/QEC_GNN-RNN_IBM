@@ -1,21 +1,17 @@
-import sys, os
-sys.path.append(os.path.join(os.path.dirname(__file__), os.pardir))
-
-from qiskit_qec.circuits.repetition_code import RepetitionCodeCircuit
-
 import json
+import numpy as np
 
-
-from qiskit import transpile, QuantumCircuit, QuantumRegister, ClassicalRegister
-from qiskit.circuit import IfElseOp
-from qiskit_ibm_runtime import QiskitRuntimeService, RuntimeEncoder, SamplerV2 as Sampler, Batch
+from qiskit import transpile, QuantumCircuit
+from qiskit_ibm_runtime import QiskitRuntimeService, RuntimeEncoder, SamplerV2 as Sampler
 from qiskit_aer import AerSimulator 
 
-class QuantumErrorCorrection:
+from repetition_code.repetition_code_circuit import RepetitionCodeCircuit
+
+class RepetitionCodeExecute:
     """
     Class for building and running quantum error correction circuits with Qiskit, both experimentally and in simulation.
     """
-    def __init__(self, code_distance: int, time_steps: int, shots: int, initial_state: int, simulator: bool, angle_scale: float):
+    def __init__(self, code_distance: int, time_steps: int, shots: int, initial_state: int, simulator: bool, noise_angle: float):
         """
         Initializes the system parameters and connects to a backend.
         
@@ -29,33 +25,22 @@ class QuantumErrorCorrection:
         self.shots = shots
         self.initial_state = initial_state
         self.simulator = simulator
-        self.angle_scale = angle_scale
+        self.noise_angle = noise_angle # Radians
 
         self.service = QiskitRuntimeService()
         self.backend = self.service.backend("ibm_kingston")  # Specify backend
-        #self.backend.target.add_instruction(IfElseOp, name="if_else")
         print("Connected to:", self.backend.name, "with distance:", self.code_distance, ", repetitions:", self.time_steps)
         
-    
     def optimize_circuit(self, circuit: QuantumCircuit) -> QuantumCircuit:
-        # # Example: choose physical qubit layout (must match the hardware!)
-        # layout = {self.qreg_data[i]: i for i in range(self.code_distance)}
-        
-        # for i in range(self.num_qubits - self.code_distance):
-        #     layout[self.qreg_ancillas[i]] = self.code_distance + i
-
-        # Find layout
         # from qiskit_qec.qubit_selector.backend_evaluator import BackendEvaluator
 
         # evaluator = BackendEvaluator(self.backend)
         # print("Evaluating path...")
         # path, fidelity, num_subsets = evaluator.evaluate(self.num_qubits)
-        # print(path)
         # link_qubits = path[1::2]
         # code_qubits = path[0::2]
         # layout = link_qubits + code_qubits
-        # print(layout)
-        #asdasd
+
         layout = [27, 29, 31, 11, 13, 15, 35, 33, 53, 51, 71, 73, 93, 91, 89, 87, 107, 109, 129, 127, 125, 105, 103, 101, 17, 28, 30, 18, 12, 14, 19, 34, 39, 52, 58, 72, 79, 92, 90, 88, 97, 108, 118, 128, 126, 117, 104, 102, 116]
         #layout = [0,2,4,6,8,10,12,14,19,34,32,30,38,48,57,68,70,72,79,92,90,88,86,84,96, 1,3,5,7,9,11,13,15,35,33,31,29,49,47,67,69,71,73,93,91,89,87,85,83]
 
@@ -69,8 +54,8 @@ class QuantumErrorCorrection:
     
     def execute(self) -> object:
         """ Runs the quantum circuit on the selected backend and saves the result. """
-        code = RepetitionCodeCircuit(self.code_distance, self.time_steps, resets=False, xbasis=True, barriers=True)
-        circuit = code.circuit["0"]
+        code = RepetitionCodeCircuit(self.code_distance, self.time_steps, resets=False, xbasis=True, barriers=True, noise_angle=self.noise_angle)
+        circuit = code.circuit[str(self.initial_state)]
         transpiled_circuit = self.optimize_circuit(circuit)
 
         if self.simulator:  # Use Aer simulator
@@ -84,13 +69,13 @@ class QuantumErrorCorrection:
             
             time = result.to_dict()["time_taken"]
             print(f"Measurement saved as '{filename}', simulated sampling took {time:.1f} s.")
+        
         else:
             # Run on a real IBM backend
             sampler = Sampler(self.backend)
-            #sampler.options.experimental = {"execution_path" : "gen3-experimental"}
             job = sampler.run([transpiled_circuit], shots=self.shots)
             result = job.result()
-            filename = f"./jobdata/ibm/{job.job_id()}_{self.code_distance}_{self.time_steps}_{self.shots}_{self.angle_scale:.4f}.json"
+            filename = f"./jobdata/ibm/noise_angle/{job.job_id()}_{self.code_distance}_{self.time_steps}_{self.shots}_{self.initial_state}_{self.noise_angle:.4f}.json"
 
             with open(filename, "w") as file:
                 json.dump(result, file, cls=RuntimeEncoder)
@@ -99,5 +84,7 @@ class QuantumErrorCorrection:
         return result
 
 if __name__ == "__main__":
-    qec = QuantumErrorCorrection(code_distance=25, time_steps=49, shots=20_000, initial_state=0, simulator=False, angle_scale=0)
-    qec.execute()
+    alphas = np.linspace(0, 4/50, 11)  # 0, π/50, 2π/50, …, 4π/50
+    for alpha in alphas:
+        qec = RepetitionCodeExecute(code_distance=49, time_steps=49, shots=20_000, initial_state=0, simulator=False, noise_angle=alpha)
+        qec.execute()

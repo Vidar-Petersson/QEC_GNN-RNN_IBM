@@ -181,7 +181,7 @@ class QuantumErrorCorrection:
             sampler.options.experimental = {"execution_path" : "gen3-experimental"}
             job = sampler.run([transpiled_circuit], shots=self.shots)
             result = job.result()
-            filename = f"./jobdata/ibm/testdata/{job.job_id()}_{self.code_distance}_{self.time_steps}_{self.shots}_{self.initial_state}.json"
+            filename = f"./jobdata/ibm/{job.job_id()}_{self.code_distance}_{self.time_steps}_{self.shots}_{self.angle_scale:.4f}.json"
 
             with open(filename, "w") as file:
                 json.dump(result, file, cls=RuntimeEncoder)
@@ -222,5 +222,5 @@ class QuantumErrorCorrection:
         return results
 
 if __name__ == "__main__":
-    qec = QuantumErrorCorrection(code_distance=25, time_steps=9, shots=500_000, initial_state=0, simulator=False, angle_scale=0)
+    qec = QuantumErrorCorrection(code_distance=3, time_steps=13, shots=20_000, initial_state=0, simulator=False, angle_scale=0)
     qec.execute()
