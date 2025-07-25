@@ -24,6 +24,7 @@ class IBMSampler:
         self.distance = args.distance
         self.load_distance = args.load_distance if args.load_distance is not None else args.distance
         self.t = args.t[0]
+        self.noise_angle = args.noise_angle
 
         self.job_dir, self.filename = self._find_filename()
         self.job_params = self._parse_job_params(self.filename)
@@ -36,15 +37,15 @@ class IBMSampler:
         Raises:
             FileNotFoundError: If no matching file is found.
         """
-        job_dir = Path("./jobdata/aer") if self.simulator else Path("./jobdata/ibm")
-        pattern = re.compile(rf"_({self.load_distance})_({self.t - 1})_")
+        job_dir = Path("./jobdata/aer") if self.simulator else Path("./jobdata/ibm/noise_angle")
+        pattern = re.compile(rf"_({self.load_distance})_({self.t - 1})_20000_0_{self.noise_angle}") # TODO better file selection
 
         for filename in os.listdir(job_dir):
             if pattern.search(filename):
                 return job_dir, filename
 
         raise FileNotFoundError(
-            f"No file found in '{job_dir}' matching pattern '_{self.load_distance}_{self.t - 1}_'"
+            f"No file found in '{job_dir}' matching pattern '_{self.load_distance}_{self.t - 1}_20000_0_{self.noise_angle}'"
         )
 
     def _parse_job_params(self, filename: str) -> dict:
@@ -60,6 +61,10 @@ class IBMSampler:
 
         job_id = parts[0]
         code_distance, t, shots, initial_logical_state = map(int, parts[1:5])
+        try: # For backwards compability
+            noise_angle = map(float, parts[5])
+        except:
+            noise_angle = 0.0
 
         return {
             "file_name": name,
@@ -69,6 +74,7 @@ class IBMSampler:
             "t": t,
             "shots": shots,
             "initial_logical_state": initial_logical_state,
+            "noise_angle": noise_angle,
         }
 
     def _load_json(self) -> Tuple[List[str], List[str]]:
@@ -94,58 +100,57 @@ class IBMSampler:
             data = data[0]  # Experimental jobs are returned as a list
 
             if len(data.data.keys()) > 4: #New repetition_code qiskit-qec
-                link_list = []
+                # 1) Separera ut code_bit och bygg listan av arrayer
+                arrays = []
                 for name, reg in data.data.items():
+                    bits = reg.get_bitstrings()
                     if name == "code_bit":
-                        final_state = reg.get_bitstrings()
-                        break
-                    link_list.append(reg.get_bitstrings())
+                        final_state = self._bitstrings_to_array(bits)
+                    else:
+                        arrays.append(self._bitstrings_to_array(bits))
 
-                syndromes = [' '.join(bits) for bits in zip(*reversed(link_list))]
+                # 2) Skapa en 3D-array med form (R, S, Q):
+                #    R = antal register utom code_bit
+                #    S = antal upprepningar (shots)
+                #    Q = antal kvantbitar per register
+                regs = np.stack(arrays[::-1], axis=0)  # vänder ordningen och staplar
 
-                # if there are no resets, results are cumulative and need to be separated
-                cumsyndlist = []
-                for synd in syndromes:
-                    cumsyn_list = synd.split(" ")
-                    syndrome_list = []
-                    for tt, cum_syn in enumerate(cumsyn_list[0:-1]):
-                        syn = ""
-                        for j in range(len(cum_syn)):
-                            syn += str(int(cumsyn_list[tt][j] != cumsyn_list[tt + 1][j]))
-                        syndrome_list.append(syn)
-                    syndrome_list.append(cumsyn_list[-1])
-                    cumsyndlist.append("".join(syndrome_list))
-                syndromes = cumsyndlist
+                # 3) Beräkna kumulativa syndrom-bitar (flipp/icke-flipp)
+                #    diff[i] = regs[i] != regs[i+1], form (R-1, S, Q)
+                diff = (regs[:-1] != regs[1:]).astype(np.uint8)
+
+                # 4) Lägg till sista registret oförändrat som sista skikt
+                last = regs[-1:].astype(np.uint8)  # form (1, S, Q)
+
+                # 5) Kombinera till syndrom-array form (R, S, Q)
+                syndrome_stack = np.concatenate([diff, last], axis=0)
+
+                # 6) Permutera så att första dimensionen är shots (S), sedan register×qubits
+                #    och sluttligen "flattenar" de två sista till en 2D-array
+                shots = syndrome_stack.shape[1]
+                R, _, Q = syndrome_stack.shape
+                syndromes = syndrome_stack.transpose(1, 0, 2).reshape(shots, R * Q)
+
             else: # Old code
-                syndromes = data.data.syndromes.get_bitstrings()
-                final_state = data.data.final_state.get_bitstrings()
+                syndromes = self._bitstrings_to_array(data.data.syndromes.get_bitstrings())
+                final_state = self._bitstrings_to_array(data.data.final_state.get_bitstrings())
 
         if hasattr(data.data, "middle_states"):
-            middle_states = data.data.middle_states.get_bitstrings()
+            middle_states = self._bitstrings_to_array(data.data.middle_states.get_bitstrings())
         else:
             middle_states = None
             print("Warning: Jobdata doesn't include middle_states!")
+        
 
         # Reverse bit order to match IBM's convention
-        syndromes = [s[::-1] for s in syndromes]
+        syndromes = syndromes[:, ::-1]
         if middle_states is not None:
-            middle_states = [s[::-1] for s in middle_states]
-        final_state = [s[::-1] for s in final_state]
+            middle_states = middle_states[:, ::-1]
+        final_state = final_state[:, ::-1]
 
         return syndromes, middle_states, final_state
 
-    def _compute_syndrome_differences(self, states: List[str]) -> np.ndarray:
-        """
-        Computes the parity difference between time t-1 and t.
-        Args:
-            states (List[str]): Final logical state bitstrings.
-        Returns:
-            np.ndarray: Final syndrome bits, shape (shots, ancillas)
-        """
-        arr = self._bitstrings_to_array(states)
-        return arr[:, :-1] ^ arr[:, 1:]
-
-    def _get_syndrome_matrix(self, syndromes: List[str], final_state: List[str]) -> np.ndarray:
+    def _get_syndrome_matrix(self, mid_syndromes: List[str], final_state: List[str]) -> np.ndarray:
         """
         Builds the full syndrome matrix including initial and final logical readings.
         Returns:
@@ -156,10 +161,9 @@ class IBMSampler:
         init_bit = str(self.job_params["initial_logical_state"])
         initial_syndrome = np.full((shots, ancillas), int(init_bit), dtype=np.uint8)
 
-        mid_syndrome = self._bitstrings_to_array(syndromes)
-        final_syndrome = self._compute_syndrome_differences(final_state)
+        final_syndrome = final_state[:, :-1] ^ final_state[:, 1:]
 
-        return np.concatenate([initial_syndrome, mid_syndrome, final_syndrome], axis=1)
+        return np.concatenate([initial_syndrome, mid_syndromes, final_syndrome], axis=1)
 
     def _extract_detection_events(self, syndrome: np.ndarray) -> np.ndarray:
         """
@@ -181,16 +185,15 @@ class IBMSampler:
         if middle_states is not None:
             print("Warning: Middle state handling not yet implemented")
 
-        final_array = self._bitstrings_to_array(final_state)  # shape (shots, num_logical_qubits)
-        shots, num_logicals = final_array.shape
+        shots, num_logicals = final_state.shape
 
         if logical_index is None:
-            flips = final_array == 1  # shape: (shots, num_logicals)
+            flips = final_state == 1  # shape: (shots, num_logicals)
             matrix = np.zeros((shots, num_logicals, self.t), dtype=bool)
             matrix[:, :, -1] = flips
             return matrix  # shape: (shots, num_logicals, t)
         else:
-            flips = final_array[:, logical_index] == 1
+            flips = final_state[:, logical_index] == 1
             matrix = np.zeros((shots, self.t), dtype=bool)
             matrix[:, -1] = flips
             return matrix  # shape: (shots, t)
@@ -272,7 +275,7 @@ class IBMSampler:
 
 
 if __name__ == "__main__":
-    args = Args(t=[12], distance=3, simulator_backend=False)
+    args = Args(t=[50], distance=49, noise_angle=0.2513, simulator_backend=False)
     sampler = IBMSampler(args)
     detection_events, observable_flips = sampler.load_jobdata(verbose=True)
     print("Original detection events and logical flips shape:", detection_events.shape)
