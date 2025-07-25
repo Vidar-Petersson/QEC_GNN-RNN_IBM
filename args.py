@@ -1,5 +1,6 @@
 from dataclasses import dataclass, field
 import torch
+import numpy as np
 
 @dataclass
 class Args:
@@ -10,6 +11,8 @@ class Args:
     dt: int = 2
     distance: int = 3
     load_distance: None | int = None
+    noise_angle: float = 0.0
+
     sliding: bool = True
     k: int = 20
     seed: int | None = None
@@ -39,6 +42,6 @@ class Args:
     n_gru_layers: int = 4
 
     # Training
-    val_fraction: float = 0.1 # Portion of data used for validation
+    val_fraction: float = 1 # Portion of data used for validation
     pre_train: bool = False # If simulated data should be used for pre-training network
     log_wandb: bool = False
