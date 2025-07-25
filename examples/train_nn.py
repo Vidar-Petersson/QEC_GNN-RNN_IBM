@@ -10,8 +10,8 @@ import argparse
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument('--d', type=int, default=3)
-    parser.add_argument('--t', type=int, default=6)
+    parser.add_argument('--d', type=int, default=15)
+    parser.add_argument('--t', type=int, default=50)
     parser.add_argument('--dt', type=int, default=2)
     parser.add_argument('--batch_size', type=int, default=2048) #2048*256//10
     parser.add_argument('--n_batches', type=int, default=1) # Irrelevant for IBM Data
@@ -19,7 +19,6 @@ if __name__ == "__main__":
     parser.add_argument('--load_path', type=str, default=None)
 
     args_cli = parser.parse_args()
-
     d = args_cli.d
     t = args_cli.t
     dt = args_cli.dt
@@ -27,22 +26,27 @@ if __name__ == "__main__":
 
     args = Args(
         distance=d,
-        error_rates=[0.001, 0.002, 0.003, 0.004, 0.005],
         t=[t],
         dt=dt,
+        noise_angle=0.0,
         sliding=True,
         train_all_times = False,
+        val_fraction=0.1,
+        load_distance=49,
         batch_size=args_cli.batch_size,
         n_batches=args_cli.n_batches,
         n_epochs=args_cli.n_epochs,
-        embedding_features=[5, 32, 64, 128, 256],
+        embedding_features=[2, 32, 64, 128, 256],
         hidden_size=128,
         n_gru_layers=4,
-        log_wandb=True,
-        simulator_backend=False
+        log_wandb = True,
+        simulator_backend = False,
+        pretrained_checkpoint = None, #"./models/train_final_t_d3_t6_dt2_250710_120202True.pt",   # Sökväg till .pt-fil att förträna från
+        resume = False               # Om True, läs in optimizer‑ och scheduler‑status
     )
+
     current_datetime = datetime.now().strftime("%y%m%d_%H%M%S")
-    model_name = 'train_final_t_d' + str(d) + '_t' + str(t) + '_dt' + str(dt) + '_' + current_datetime
+    model_name = 'train_final_t_d' + str(d) + '_t' + str(t) + '_dt' + str(dt) + "_alpha" + str(args.noise_angle) + '_' + current_datetime
 
     decoder = GRUDecoder(args)
     if load_path is not None:
