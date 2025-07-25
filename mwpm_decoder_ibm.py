@@ -36,6 +36,7 @@ class MWPMDecoder:
         self.weight_scheme = weight_scheme
 
         self.matcher = pymatching.Matching()
+        self._load_job_data()
 
     def _load_job_data(self) -> None:
         """
@@ -167,7 +168,7 @@ class MWPMDecoder:
         trivial_count = np.sum(~nontrivial)
 
         # Logical accuracy over all validation samples
-        print("Accuracy (excluding trivial syndromes):", correct/predicted.shape[0])
+        #print(f"Accuracy (excluding trivial syndromes): {correct/predicted.shape[0]:.5f}")
         logical_accuracy = (correct + trivial_count) / self.val_size
         logical_accuracy_err = standard_deviation(logical_accuracy, self.val_size)
 
@@ -182,13 +183,12 @@ class MWPMDecoder:
         logical_accuracy : float
             Logical accuracy on the validation set.
         """
-        self._load_job_data()
         self._get_edges()
         return self._evaluate_predictions()
 
 
 if __name__ == "__main__":
-    args = Args(t=[12], distance=3, simulator_backend=False)
+    args = Args(t=[50], distance=49, simulator_backend=False)
     decoder = MWPMDecoder(args, weight_scheme="p_ij")
     logical_accuracy, logical_accuracy_err = decoder.decode()
-    print(f"Decoder completed with logical accuracy: {logical_accuracy:.3f}")
+    print(f"Decoder completed with logical accuracy: {logical_accuracy:.5f}")
