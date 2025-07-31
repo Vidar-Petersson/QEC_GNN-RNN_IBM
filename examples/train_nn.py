@@ -1,6 +1,6 @@
 import sys, os
 sys.path.append(os.path.join(os.path.dirname(__file__), os.pardir))
-from gru_decoder import GRUDecoder
+from gru_decoder_IQ import GRUDecoder
 from args import Args
 from utils import TrainingLogger
 import torch
@@ -10,8 +10,8 @@ import argparse
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument('--d', type=int, default=15)
-    parser.add_argument('--t', type=int, default=50)
+    parser.add_argument('--d', type=int, default=3)
+    parser.add_argument('--t', type=int, default=6)
     parser.add_argument('--dt', type=int, default=2)
     parser.add_argument('--batch_size', type=int, default=2048) #2048*256//10
     parser.add_argument('--n_batches', type=int, default=1) # Irrelevant for IBM Data
@@ -32,11 +32,11 @@ if __name__ == "__main__":
         sliding=True,
         train_all_times = False,
         val_fraction=0.1,
-        load_distance=49,
+        load_distance=None,
         batch_size=args_cli.batch_size,
         n_batches=args_cli.n_batches,
         n_epochs=args_cli.n_epochs,
-        embedding_features=[2, 32, 64, 128, 256],
+        embedding_features=[3, 32, 64, 128, 256],
         hidden_size=128,
         n_gru_layers=4,
         log_wandb = True,
