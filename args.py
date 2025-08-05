@@ -12,6 +12,7 @@ class Args:
     distance: int = 3
     load_distance: None | int = None
     noise_angle: float = 0.0
+    sub_dir: None | str = None
 
     sliding: bool = True
     k: int = 20
@@ -32,7 +33,7 @@ class Args:
     ))
     batch_size: int = 2048
     n_batches: int = 256 # Should be dynamic and depend on the number of shots in job
-    n_epochs: int = 600
+    n_epochs: int = 600 # -:-
     lr: float = 1e-3
     min_lr: float = 1e-4
 
@@ -42,6 +43,6 @@ class Args:
     n_gru_layers: int = 4
 
     # Training
-    val_fraction: float = 1 # Portion of data used for validation
+    val_fraction: float = 0.1 # Portion of data used for validation
     pre_train: bool = False # If simulated data should be used for pre-training network
     log_wandb: bool = False

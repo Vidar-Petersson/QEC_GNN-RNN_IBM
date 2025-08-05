@@ -260,7 +260,8 @@ class GRUDecoder(nn.Module):
         gc = GraphCreator(self.args)
         gc.train_val_split()  # För att säkerställa samma split‐logik
           # Hämta test-batches
-        test_batches = gc.generate_batches(mode="validation")
+        test_batches = list(gc.generate_batches(mode="validation")) # Yield everything into list
+        test_batches = [tuple(t.to(self.args.device) for t in batch) for batch in test_batches] # Move all validation data to GPU
 
         self.eval()
         total_loss = 0.0
@@ -270,7 +271,7 @@ class GRUDecoder(nn.Module):
         model_time = 0.0
 
         with torch.no_grad():
-            for batch in tqdm(test_batches):
+            for batch in tqdm(test_batches, desc="Evaluating model on test batches"):
                 t0 = time.perf_counter()
                 x, edge_index, batch_labels, label_map, edge_attr, aligned_flips, lengths, last_label = batch
                 t1 = time.perf_counter()
@@ -286,11 +287,10 @@ class GRUDecoder(nn.Module):
                     loss = nn.functional.binary_cross_entropy(final_pred, last_label)
 
                 total_loss += loss.item()
-                correct = torch.sum(torch.round(final_pred) == last_label).item()
-                total_correct += correct
+                total_correct += torch.sum(torch.round(final_pred) == last_label).item()
                 total_elements += last_label.numel()
 
-                data_time += (t1 - t0)
+                data_time  += (t1 - t0)
                 model_time += (t2 - t1)
 
         # Beräkna physical accuracy
@@ -298,7 +298,6 @@ class GRUDecoder(nn.Module):
         physical_acc = total_correct / total_elements
 
         # Beräkna logical accuracy (inkluderar trivial-errors från GraphCreator)
-        # Antar att dataset har attribut test_num_trivial och test_size
         logical_acc = (total_correct + gc.val_num_trivial) / gc.val_size
 
         # Skriv ut resultat

@@ -42,7 +42,8 @@ if __name__ == "__main__":
         log_wandb = True,
         simulator_backend = False,
         pretrained_checkpoint = None, #"./models/train_final_t_d3_t6_dt2_250710_120202True.pt",   # Sökväg till .pt-fil att förträna från
-        resume = False               # Om True, läs in optimizer‑ och scheduler‑status
+        resume = False,           # Om True, läs in optimizer‑ och scheduler‑status
+        sub_dir="iq_data"
     )
 
     current_datetime = datetime.now().strftime("%y%m%d_%H%M%S")

@@ -26,6 +26,7 @@ class IBMSampler:
         self.t = args.t[0]
         self.noise_angle = args.noise_angle
 
+        self.sub_dir = args.sub_dir
         self.job_dir, self.filename = self._find_filename()
         self.job_params = self._parse_job_params(self.filename)
 
@@ -37,9 +38,9 @@ class IBMSampler:
         Raises:
             FileNotFoundError: If no matching file is found.
         """
-        job_dir = Path("./jobdata/aer") if self.simulator else Path("./jobdata/ibm/noise_angle")
-        pattern = re.compile(rf"_({self.load_distance})_({self.t - 1})_20000_0_{self.noise_angle}") # TODO better file selection
-
+        job_dir = Path(f"./jobdata/aer{"/"+self.sub_dir if not None else ""}") if self.simulator else Path(f"./jobdata/ibm{"/"+self.sub_dir if not None else ""}")
+        pattern = re.compile(rf"_({self.load_distance})_({self.t - 1})")
+        
         for filename in os.listdir(job_dir):
             if pattern.search(filename):
                 return job_dir, filename
@@ -262,8 +263,9 @@ class IBMSampler:
         sub_det = np.vstack(subsampled_dets)
         sub_flips = np.vstack(subsampled_flips)
 
-        if sub_det.shape[0] > 1000000: # Esnures maximum of 1 million shots per configuration
-            row_index = np.random.choice(sub_det.shape[0], size=100000, replace=False)
+        if sub_det.shape[0] > 1_000_000: # Esnures maximum of 1 million shots per configuration
+            # Add random seed!
+            row_index = np.random.choice(sub_det.shape[0], size=1_000_000, replace=False)
             sub_det   = sub_det[row_index]
             sub_flips = sub_flips[row_index]
 
