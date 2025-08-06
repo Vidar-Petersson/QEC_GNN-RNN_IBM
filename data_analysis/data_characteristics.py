@@ -3,7 +3,7 @@ sys.path.append(os.path.join(os.path.dirname(__file__), os.pardir))
 import matplotlib.pyplot as plt
 import numpy as np
 
-from dataloader_ibm import IBMSampler
+from dataloader_ibm_IQ import IBMSampler
 
 
 def trivial(detections):
@@ -33,7 +33,7 @@ def analyze_class_balance(train_flips, val_flips=None):
         print(f"  [Validering]  1: {val_ones}   0: {val_zeros}   Andel 1: {frac_val_ones:.3f} ± {stderr_val:.3f}")
 
 
-def analyze_pdet_time(detections):
+def analyze_pdet_time(detections, verbose=True):
     detector1 = detections.mean(axis=0)[1::2]
     detector2 = detections.mean(axis=0)[::2]
     stderr1 = detections[:, 1::2].std(axis=0, ddof=1) / np.sqrt(detections.shape[0])
@@ -42,8 +42,11 @@ def analyze_pdet_time(detections):
     mean2 = np.mean(detector2)
     stderr_mean1 = np.sqrt(np.mean(stderr1 ** 2))
     stderr_mean2 = np.sqrt(np.mean(stderr2 ** 2))
-    print(f"Genomsnittlig detektionssannolikhet: Detektor 1: {mean1:.4f} ± {stderr_mean1:.4f}, "
-          f"Detektor 2: {mean2:.4f} ± {stderr_mean2:.4f}")
+    if verbose:
+        print(f"Genomsnittlig detektionssannolikhet: Detektor 1: {mean1:.4f} ± {stderr_mean1:.4f}, "
+            f"Detektor 2: {mean2:.4f} ± {stderr_mean2:.4f}")
+    pdet_mean = np.mean([mean1, mean2])
+    return pdet_mean
 
 
 if __name__ == "__main__":

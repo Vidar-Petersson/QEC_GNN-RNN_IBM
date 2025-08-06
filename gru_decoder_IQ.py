@@ -172,7 +172,7 @@ class GRUDecoder(nn.Module):
                     loss = (loss_raw * mask).sum() / mask.sum()
                 else:
                     # If not training all times, we only consider the final label
-                    weight = 1.0 - last_label_batch_soft
+                    weight = 1.0 - torch.abs(last_label - last_label_batch_soft)
                     # loss = nn.functional.binary_cross_entropy(final_prediction, last_label)
                     loss_raw = nn.functional.binary_cross_entropy(final_prediction, last_label, reduction="none")
                     loss = (loss_raw * weight).sum() / weight.sum() # Vikta med soft
@@ -200,7 +200,7 @@ class GRUDecoder(nn.Module):
                         loss_raw = nn.functional.binary_cross_entropy(out, aligned_flips, reduction='none')
                         loss     = (loss_raw * mask).sum() / mask.sum()
                     else:
-                        weight = 1.0 - last_label_batch_soft
+                        weight = 1.0 - torch.abs(last_label - last_label_batch_soft)
                         loss_raw = nn.functional.binary_cross_entropy(final_prediction, last_label, reduction="none")
                         loss = (loss_raw * weight).sum() / weight.sum() # Vikta med soft
 
@@ -258,7 +258,6 @@ class GRUDecoder(nn.Module):
         och beräkna genomsnittlig loss och accuracy. Mäter även tidsåtgång för data
         och modell. Loggar resultat till wandb och/eller lokal logger om angivet.
         """
-        # TODO ändra nedanstående så att det är kompatibelt med nya generatorn
 
         # Skapa dataset och batches
         # Antingen återanvänd GraphCreator om du vill ny split, eller ta in dataset som parameter

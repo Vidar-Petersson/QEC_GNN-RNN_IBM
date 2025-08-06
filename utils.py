@@ -39,8 +39,8 @@ def generate_batches_async(gc, mode: str, max_prefetch: int = 5, log_threshold: 
         for batch in gc.generate_batches(mode):
             q.put(batch)  # blockerar om kön är full
             # Logga om kön börjar bli för full
-            if q.qsize() > log_threshold:
-                print(f"Prefetch queue size = {q.qsize()}. Training is slower than generation?")
+            # if q.qsize() > log_threshold:
+            #     print(f"Prefetch queue size = {q.qsize()}. Training is slower than generation?")
         # När alla batcher är producerade, skicka en sentinel
         q.put(None)
 
@@ -52,8 +52,8 @@ def generate_batches_async(gc, mode: str, max_prefetch: int = 5, log_threshold: 
         # Logga om vi behöver vänta på produktion
         if batch is None:
             return None
-        if q.qsize() == 0:
-            print("Prefetch queue empty. Waiting for next batch generation…")
+        # if q.qsize() == 0:
+        #     print("Prefetch queue empty. Waiting for next batch generation…")
         return batch
 
     return thread, get_next_batch

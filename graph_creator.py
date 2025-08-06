@@ -1,7 +1,6 @@
 import numpy as np
 import torch
 from tqdm import tqdm
-import time
 from args import Args
 from torch_geometric.nn.pool import knn_graph
 from dataloader_ibm import IBMSampler

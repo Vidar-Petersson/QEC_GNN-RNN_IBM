@@ -1,5 +1,6 @@
 import numpy as np
 from sklearn.mixture import GaussianMixture
+import matplotlib.pyplot as plt
 
 class SoftCalibrator:
     """
@@ -108,3 +109,44 @@ class SoftCalibrator:
             hard_flat[:, det] = inv_map[comps]
 
         return hard_flat.reshape(R, S, D)
+
+    def visualize_iq_with_psoft(self, iq_data: np.ndarray, p_soft: np.ndarray, detector_index=0, max_points=1000):
+        """
+        Visualize IQ data colored by p_soft for a given detector.
+
+        Args:
+            iq_data: np.ndarray of shape (R, S, D) with complex IQ values.
+            p_soft: np.ndarray of shape (R, S, D) with soft misclassification probabilities.
+            detector_index: int, which detector to visualize.
+            max_points: int, max number of points to plot.
+        """
+        if iq_data.ndim != 3 or p_soft.ndim != 3:
+            raise ValueError("iq_data and p_soft must be 3D arrays (R, S, D)")
+
+        iq_flat = iq_data[:, :, detector_index].ravel()
+        p_soft_flat = p_soft[:, :, detector_index].ravel()
+
+        # Limit number of points for visual clarity
+        if len(iq_flat) > max_points:
+            idx = np.random.choice(len(iq_flat), max_points, replace=False)
+            iq_flat = iq_flat[idx]
+            p_soft_flat = p_soft_flat[idx]
+
+        # Plot IQ points with p_soft color
+        plt.figure(figsize=(6, 5))
+        scatter = plt.scatter(iq_flat.real, iq_flat.imag, c=p_soft_flat,
+                              cmap='viridis', s=10, alpha=0.8)
+
+        # Plot GMM centers
+        centers = self.models[detector_index]['gmm'].means_
+        plt.scatter(centers[:, 0], centers[:, 1], color='red', marker='x', s=80, label='GMM centers')
+
+        plt.xlabel("I (Real part)")
+        plt.ylabel("Q (Imag part)")
+        plt.title(f"IQ with $p_\\mathrm{{soft}}$ (Detector {detector_index})")
+        plt.colorbar(scatter, label="$p_\\mathrm{soft}$")
+        plt.legend()
+        plt.grid(True)
+        plt.axis('equal')
+        plt.tight_layout()
+        plt.show()

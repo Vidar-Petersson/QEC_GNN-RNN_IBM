@@ -124,6 +124,6 @@ locale.setlocale(locale.LC_NUMERIC, "sv_SE.UTF-8")
 plt.rcParams.update(tex_fonts)
 
 width = 455.24411 #Bredden på latex dokumentet  
-plt.rcParams["figure.figsize"] = set_size(width, fraction=0.8) #Får inte finnas plt.tight_layout() i andra filen
+plt.rcParams["figure.figsize"] = set_size(width, fraction=1) #Får inte finnas plt.tight_layout() i andra filen
 #plt.rcParams["figure.figsize"] = set_square_size(width, fraction=0.4) #Får inte finnas plt.tight_layout() i andra filen
 plt.style.context('seaborn-whitegrid')

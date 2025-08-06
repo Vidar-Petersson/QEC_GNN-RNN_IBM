@@ -26,8 +26,9 @@ class IBMSampler:
         self.distance = args.distance
         self.load_distance = args.load_distance if args.load_distance is not None else args.distance
         self.t = args.t[0]
-        self.noise_angle = args.noise_angle
+        self.noise_angle = round(args.noise_angle, 4)
 
+        self.sub_dir = args.sub_dir
         self.job_dir, self.filename = self._find_filename()
         self.job_params = self._parse_job_params(self.filename)
 
@@ -39,15 +40,17 @@ class IBMSampler:
         Raises:
             FileNotFoundError: If no matching file is found.
         """
-        job_dir = Path("./jobdata/aer") if self.simulator else Path("./jobdata/ibm/iq_data")
-        pattern = re.compile(rf"_({self.load_distance})_({self.t - 1})_50000_0_{self.noise_angle}") # TODO better file selection
+        sub_dir = "/"+self.sub_dir if self.sub_dir is not None else ""
+        job_dir = Path(f"./jobdata/aer{sub_dir}") if self.simulator else Path(f"./jobdata/ibm{sub_dir}")
+        # TODO fix this pattern match, currently you have to change the number os shots to match the desired file
+        pattern = re.compile(rf"_({self.load_distance})_({self.t - 1})_20000_0_{self.noise_angle}")
 
         for filename in os.listdir(job_dir):
             if pattern.search(filename):
                 return job_dir, filename
 
         raise FileNotFoundError(
-            f"No file found in '{job_dir}' matching pattern '_{self.load_distance}_{self.t - 1}_100_0_{self.noise_angle}'"
+            f"No file found in '{job_dir}' matching pattern '_{self.load_distance}_{self.t - 1}'"
         )
 
     def _parse_job_params(self, filename: str) -> dict:
@@ -105,8 +108,8 @@ class IBMSampler:
                     raw_arrays = []
                     for name, reg in data[0].data.items():
                         if name == "code_bit":
-                            final_state = reg
-                            final_state = np.expand_dims(final_state, axis=0) # Input formatting to the SoftCalibrator class
+                            final_state_raw = reg
+                            final_state_raw = np.expand_dims(final_state_raw, axis=0) # Input formatting to the SoftCalibrator class
                         else:
                             raw_arrays.append(reg)
 
@@ -116,10 +119,14 @@ class IBMSampler:
                     no_reset_soft = self.syndrome_calibrator.compute_p_soft(raw_arrays)
                     no_reset = self.syndrome_calibrator.infer_hard(raw_arrays)
                     syndromes, syndromes_soft = self._reset_adjust(no_reset, no_reset_soft)
+                    #self.syndrome_calibrator.visualize_iq_with_psoft(raw_arrays, no_reset_soft, detector_index=1)
 
-                    self.final_state_calibrator = SoftCalibrator(calibration_data=final_state)
-                    final_state_soft = self.final_state_calibrator.compute_p_soft(final_state)[0]
-                    final_state = self.final_state_calibrator.infer_hard(final_state)[0]
+
+                    self.final_state_calibrator = SoftCalibrator(calibration_data=final_state_raw)
+                    final_state_soft = self.final_state_calibrator.compute_p_soft(final_state_raw)[0]
+                    final_state = self.final_state_calibrator.infer_hard(final_state_raw)[0]
+                    final_state_soft = final_state * (1 - final_state_soft) + (1 - final_state) * final_state_soft # convert to P(b=1), probability of being one
+                    #self.final_state_calibrator.visualize_iq_with_psoft(final_state_raw, final_state_soft, detector_index=0)
 
                 else: #New repetition_code qiskit-qec
                     # 1) Separera ut code_bit och bygg listan av arrayer
@@ -145,9 +152,11 @@ class IBMSampler:
         
         # Reverse bit order, IBM's convention is right -> left read-out
         syndromes = syndromes[:, ::-1]
+        syndromes_soft = syndromes_soft[:, ::-1]
         if middle_states is not None:
             middle_states = middle_states[:, ::-1]
         final_state = final_state[:, ::-1]
+        final_state_soft = final_state_soft[:, ::-1]
 
         return syndromes, syndromes_soft, middle_states, final_state, final_state_soft
 
@@ -211,7 +220,7 @@ class IBMSampler:
 
         return np.concatenate([initial_syndrome, mid_syndromes, final_syndrome], axis=1)
 
-    def _get_syndrome_matrix_soft(self, mid_syndromes_soft: List[str],final_state, final_state_soft: List[str]) -> np.ndarray:
+    def _get_syndrome_matrix_soft(self, mid_syndromes_soft: List[str], final_state, final_state_soft: List[str]) -> np.ndarray:
         """
         Builds the full syndrome matrix including initial and final logical readings.
         Returns:
@@ -219,14 +228,11 @@ class IBMSampler:
         """
         ancillas = self.job_params["ancillas"]
         shots = self.job_params["shots"]
+        init_bit = str(self.job_params["initial_logical_state"])
 
-        p_final_true = (
-        final_state * (1 - final_state_soft)    # om bit=1, kvar med 1-soft
-        + (1 - final_state) * final_state_soft  # om bit=0, soft är P(fel)=P(verkligt=1)
-        )  # → shape (shots, Q)
+        initial_syndrome_soft = np.full((shots, ancillas), int(init_bit), dtype=np.uint8)
 
-        initial_syndrome_soft = np.full((shots, ancillas), 0, dtype=np.uint8)
-        final_syndrome_soft = p_final_true[:,:-1] * (1 - p_final_true[:,1:]) + (1 - p_final_true[:,:-1]) * p_final_true[:,1:]
+        final_syndrome_soft = final_state_soft[:,:-1] * (1 - final_state_soft[:,1:]) + (1 - final_state_soft[:,:-1]) * final_state_soft[:,1:]
         
         return np.concatenate([initial_syndrome_soft, mid_syndromes_soft, final_syndrome_soft], axis=1)
 
@@ -281,18 +287,36 @@ class IBMSampler:
             matrix[:, -1] = flips
             return matrix  # shape: (shots, t)
         
-    def _extract_logical_flip_probs(self, final_state_soft: np.ndarray) -> np.ndarray:
+    def _extract_logical_flip_probs(self, final_state_soft: np.ndarray, logical_index) -> np.ndarray:
         """
-        final_state_soft: shape (shots,)
+        final_state_soft: shape (shots, distance)
         initial_logical_state: 0 eller 1 (från job_params)
         Returnerar shape (shots,) med P(logical_flip=1)
         """
         init = self.job_params["initial_logical_state"]
-        # Om init=0 är P(flip)=p_final, annars P(flip)=1-p_final
-        if init == 0:
-            return final_state_soft
+        shots, num_logicals = final_state_soft.shape
+
+        if logical_index is None:
+            if init == 0:
+                flips = final_state_soft
+            else:
+                flips = 1 - final_state_soft
         else:
-            return 1 - final_state_soft
+            if init == 0:
+                flips = final_state_soft[:,logical_index]
+            else:
+                flips = 1 - final_state_soft[:,logical_index]
+
+        if logical_index is None:
+            matrix = np.zeros((shots, num_logicals, self.t))
+            matrix[:, :, -1] = flips
+            return matrix  # shape: (shots, num_logicals, t)
+        else:
+            matrix = np.zeros((shots, self.t))
+            matrix[:, -1] = flips
+            return matrix  # shape: (shots, t)
+        # Om init=0 är P(flip)=p_final, annars P(flip)=1-p_final
+
 
     def load_jobdata(self, verbose: bool = True) -> Tuple[np.ndarray, np.ndarray]:
         """
@@ -305,25 +329,28 @@ class IBMSampler:
 
         # Bygg hårda och mjuka syndrommatriser
         syndrome_matrix = self._get_syndrome_matrix(syndromes, final_state)
-        detection_events = self._extract_detection_events(syndrome_matrix)
-        trivial_share_before = np.mean(~np.any(detection_events, axis=1))
         syndrome_soft_matrix = self._get_syndrome_matrix_soft(syndromes_soft, final_state, final_state_soft)
 
         # Hårda det‐events
         detection_events      = self._extract_detection_events(syndrome_matrix)
+        trivial_share_before = np.mean(~np.any(detection_events, axis=1))
         # Mjuka det‐events (sannolikheter)
         detection_event_probs = self._extract_detection_event_probs(syndrome_soft_matrix)
+
 
         if self.load_distance == self.distance:
             # Hårda logiska flips
             logical_flips      = self._extract_logical_flips(middle_states, final_state, logical_index=0)
             # Mjuka logiska flips
-            logical_flip_probs = self._extract_logical_flip_probs(final_state_soft)
+            logical_flips_probs = self._extract_logical_flip_probs(final_state_soft, logical_index=0)
 
-        else:
-            raise NotImplementedError
+        else: # Here we use sampler to downsample to lower distances
+            print(final_state.shape)
+            print(final_state_soft.shape)
             logical_flips_all = self._extract_logical_flips(middle_states, final_state, logical_index=None)
-            detection_events, logical_flips = self.subsampler(detection_events, logical_flips_all)
+            logical_flips_probs = self._extract_logical_flip_probs(final_state_soft, logical_index=None)
+
+            detection_events, detection_event_probs, logical_flips, logical_flips_probs = self.subsampler(detection_events, detection_event_probs, logical_flips_all, logical_flips_probs)
             trivial_share_after = np.mean(~np.any(detection_events, axis=1))
 
         if verbose:
@@ -337,10 +364,10 @@ class IBMSampler:
             print(f"Total time: {time.perf_counter() - t0:.2f}s.")
             print("------------------------------------------------------------------------")
 
-        return detection_events, logical_flips, detection_event_probs, logical_flip_probs
+        return detection_events, logical_flips, detection_event_probs, logical_flips_probs
 
 
-    def subsampler(self, det_full: np.ndarray, logical_flips_all: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
+    def subsampler(self, det_full: np.ndarray, det_full_probs: np.ndarray, logical_flips_all: np.ndarray, logical_flips_probs) -> Tuple[np.ndarray, np.ndarray]:
         """
         Efficient subsampling of detection events and corresponding logical flips.
         Args:
@@ -351,33 +378,45 @@ class IBMSampler:
             Tuple[np.ndarray, np.ndarray]: Subsampled detection events and logical flips.
         """
 
+
         shots, total_events = det_full.shape
         full_anc = self.load_distance - 1
         target_anc = self.distance - 1
         steps = total_events // full_anc
 
         det_reshaped = det_full.reshape(shots, steps, full_anc)
+        det_probs_reshaped = det_full_probs.reshape(shots, steps, full_anc)
 
         subsampled_dets = []
+        subsampled_dets_probs = []
         subsampled_flips = []
+        subsampled_flips_probs = []
 
         for start in range(full_anc - target_anc + 1):
             window = det_reshaped[:, :, start : start + target_anc]
+            window_probs = det_probs_reshaped[:, :, start : start + target_anc]
             subsampled_dets.append(window.reshape(shots, -1))
+            subsampled_dets_probs.append(window_probs.reshape(shots, -1))
 
             flips_for_window = logical_flips_all[:, start, :]  # shape: (shots, t)
             subsampled_flips.append(flips_for_window)
+            flips_probs_for_window = logical_flips_probs[:, start, :]  # shape: (shots, t)
+            subsampled_flips_probs.append(flips_probs_for_window)
 
         sub_det = np.vstack(subsampled_dets)
+        sub_det_probs = np.vstack(subsampled_dets_probs)
         sub_flips = np.vstack(subsampled_flips)
+        sub_flips_probs = np.vstack(subsampled_flips_probs)
 
         if sub_det.shape[0] > 1_000_000: # Esnures maximum of 1 million shots per configuration
             # Add random seed!
             row_index = np.random.choice(sub_det.shape[0], size=1_000_000, replace=False)
             sub_det   = sub_det[row_index]
+            sub_det_probs   = sub_det_probs[row_index]
             sub_flips = sub_flips[row_index]
+            sub_flips_probs = sub_flips_probs[row_index]
 
-        return sub_det, sub_flips
+        return sub_det, sub_det_probs, sub_flips, sub_flips_probs
     
     @staticmethod
     def _bitstrings_to_array(bitstrings: List[str]) -> np.ndarray:
@@ -385,8 +424,8 @@ class IBMSampler:
 
 
 if __name__ == "__main__":
-    args = Args(t=[4], distance=3, noise_angle=0.0, simulator_backend=False)
+    args = Args(t=[6], distance=2, noise_angle=0.0, simulator_backend=False, load_distance=3)
     sampler = IBMSampler(args)
-    detection_events, observable_flips = sampler.load_jobdata(verbose=True)
-    print("Original detection events and logical flips shape:", detection_events.shape)
-    print("original Logical flips shape:", observable_flips.shape)
+    detections, flips, detections_probs, flips_probs = sampler.load_jobdata(verbose=True)
+    print("Original detection events and logical flips shape:", detections.shape, detections_probs.shape)
+    print("original Logical flips shape:", flips.shape, flips_probs.shape)

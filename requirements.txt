@@ -14,3 +14,4 @@ torch-cluster==1.6.3
 tqdm==4.67.1
 qiskit_ibm_runtime
 wandb
+scikit-learn

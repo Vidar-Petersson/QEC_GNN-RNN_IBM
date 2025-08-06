@@ -2,12 +2,12 @@ import sys, os
 sys.path.append(os.path.join(os.path.dirname(__file__), os.pardir))
 import numpy as np
 import time
-import pymatching
 import matplotlib.pyplot as plt
 from scipy.optimize import curve_fit
 from scipy.stats import binom
 from args import Args
 from mwpm_decoder_ibm import MWPMDecoder
+import misc.plot_settings
 
 
 def epsilon_from_PL(PL, T):
@@ -26,7 +26,7 @@ def propagate_epsilon_error(PL, PL_std, T):
     return abs(d_eps_d_PL * PL_std)
 
 
-def compute_threshold(distances, rounds, weight_scheme='p_ij', shots=10000):
+def compute_threshold(distances, rounds, weight_scheme='p_ij'):
     """
     Compute logical error per round and Lambda-factor for a list of code distances.
 
@@ -57,7 +57,7 @@ def compute_threshold(distances, rounds, weight_scheme='p_ij', shots=10000):
     orders = []
 
     for d in distances:
-        args = Args(t=[rounds], distance=d, simulator_backend=True)
+        args = Args(t=[rounds], distance=d, simulator_backend=False, load_distance=25)
         decoder = MWPMDecoder(args, weight_scheme=weight_scheme)
 
         start = time.perf_counter()
@@ -74,6 +74,7 @@ def compute_threshold(distances, rounds, weight_scheme='p_ij', shots=10000):
         orders.append((d // 2) + 1)
 
         print(f"d={d}, PL={PL:.2e} ± {PL_std:.1e}, ε={eps:.2e} ± {eps_std:.1e}, time={duration:.2f}s")
+        alpha = decoder.sampler.job_params["noise_angle"]
 
     # Linear regression in log-log space
     orders = np.array(orders)
@@ -99,11 +100,11 @@ def compute_threshold(distances, rounds, weight_scheme='p_ij', shots=10000):
 
 
 if __name__ == '__main__':
-    distances = list(range(3, 9, 2))
-    round_list = [11]
+    distances = list(range(3, 27, 2))
+    round_list = [50]
 
     for rounds in round_list:
-        eps, eps_err, Lambda, Lambda_err, fit_curve = compute_threshold(distances, rounds)
+        eps, eps_err, Lambda, Lambda_err, fit_curve = compute_threshold(distances, rounds, weight_scheme="p_ij")
 
         eb = plt.errorbar(
             distances,
@@ -112,7 +113,7 @@ if __name__ == '__main__':
             marker='o',
             linestyle='',
             capsize=3,
-            label=f"T={rounds}, Λ={Lambda:.2f}±{Lambda_err:.2f}"
+            label=fr"t={rounds}, $\Lambda$={Lambda:.2f}$\pm${Lambda_err:.2f}"
         )
 
         # Extract color from the first artist (the marker line)
@@ -124,8 +125,8 @@ if __name__ == '__main__':
     plt.xlabel(r'Code distance $d$')
     plt.ylabel(r'Logical error per round $\epsilon$')
     plt.yscale('log')
-    plt.title('MWPM Decoder Threshold Estimation')
+    #plt.title('MWPM Decoder Threshold Estimation')
     plt.legend()
     plt.grid(True, which='both', linestyle='dotted')
-    plt.tight_layout()
+    plt.savefig("threshold.pdf")
     plt.show()

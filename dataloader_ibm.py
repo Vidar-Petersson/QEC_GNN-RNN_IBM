@@ -24,7 +24,7 @@ class IBMSampler:
         self.distance = args.distance
         self.load_distance = args.load_distance if args.load_distance is not None else args.distance
         self.t = args.t[0]
-        self.noise_angle = args.noise_angle
+        self.noise_angle = round(args.noise_angle, 4)
 
         self.sub_dir = args.sub_dir
         self.job_dir, self.filename = self._find_filename()
@@ -38,9 +38,11 @@ class IBMSampler:
         Raises:
             FileNotFoundError: If no matching file is found.
         """
-        job_dir = Path(f"./jobdata/aer{"/"+self.sub_dir if not None else ""}") if self.simulator else Path(f"./jobdata/ibm{"/"+self.sub_dir if not None else ""}")
-        pattern = re.compile(rf"_({self.load_distance})_({self.t - 1})")
-        
+        sub_dir = "/"+self.sub_dir if self.sub_dir is not None else ""
+        job_dir = Path(f"./jobdata/aer{sub_dir}") if self.simulator else Path(f"./jobdata/ibm{sub_dir}")
+        # TODO fix this pattern match, currently you have to change the number os shots to match the desired file
+        pattern = re.compile(rf"_({self.load_distance})_({self.t - 1})_20000_0_{self.noise_angle}")
+
         for filename in os.listdir(job_dir):
             if pattern.search(filename):
                 return job_dir, filename
