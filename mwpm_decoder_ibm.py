@@ -45,6 +45,21 @@ class MWPMDecoder:
         """
         self.sampler = IBMSampler(self.args)
         self.detections, self.flips, _, _ = self.sampler.load_jobdata(verbose=True)
+
+    def train_val_split(self) -> None:
+        num_total = self.detections.shape[0]
+        self.val_size = int(num_total * self.validation_ratio)
+
+        rng = np.random.default_rng(42)
+        perm = rng.permutation(num_total)
+
+        # Indexera direkt med permuteringen
+        val_idx = perm[:self.val_size]
+        train_idx = perm[self.val_size:]
+        self.val_detections, self.val_flips = self.detections[val_idx], self.flips[val_idx]
+        self.train_detections, self.train_flips = self.detections[train_idx], self.flips[train_idx]
+        if self.validation_ratio == 1: # If we validate on the whole set, also train on something
+            self.train_detections, self.train_flips = self.val_detections, self.val_flips
     
     def _error_correlation_matrix_full(self) -> np.ndarray:
         """
@@ -55,8 +70,7 @@ class MWPMDecoder:
         pij_matrix : np.ndarray
             A symmetric matrix of error-pairing probabilities between detector events.
         """
-        x = self.detections.astype(np.float64)  # shape (shots, N)
-        N = x.shape[1]
+        x = self.train_detections.astype(np.float64)  # shape (shots, N)
 
         # Compute means
         mean_i = x.mean(axis=0)  # shape (N,)
@@ -144,20 +158,10 @@ class MWPMDecoder:
             Logical decoding accuracy, including both trivial and non-trivial shots.
         """
 
-        num_total = self.detections.shape[0]
-        self.val_size = int(num_total * self.validation_ratio)
-
-        rng = np.random.default_rng(42)
-        perm = rng.permutation(num_total)
-
-        # Indexera direkt med permuteringen
-        val_idx = perm[:self.val_size]
-        val_detections, val_flips = self.detections[val_idx], self.flips[val_idx]
-
         # Filter out trivial syndromes
-        nontrivial = np.any(val_detections, axis=1)
-        detections_nt = val_detections[nontrivial]
-        flips_nt = val_flips[nontrivial]
+        nontrivial = np.any(self.val_detections, axis=1)
+        detections_nt = self.val_detections[nontrivial]
+        flips_nt = self.val_flips[nontrivial]
 
         # Decode predictions using MWPM
         predictions = self.matcher.decode_batch(detections_nt)
@@ -183,6 +187,7 @@ class MWPMDecoder:
         logical_accuracy : float
             Logical accuracy on the validation set.
         """
+        self.train_val_split()
         self._get_edges()
         return self._evaluate_predictions()
 
