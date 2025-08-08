@@ -5,12 +5,14 @@ from pathlib import Path
 from typing import Tuple, List
 import numpy as np
 import time
+import tqdm
 
 from args import Args
 from qiskit_ibm_runtime import RuntimeDecoder
 
 from IQ_to_psoft import SoftCalibrator
 from HMM_calibrator import HMMDetectionProbability
+import matplotlib.pyplot as plt
 
 class IBMSampler:
     """
@@ -30,29 +32,31 @@ class IBMSampler:
         self.noise_angle = round(args.noise_angle, 4)
 
         self.sub_dir = args.sub_dir
-        self.job_dir, self.filename = self._find_filename()
-        self.job_params = self._parse_job_params(self.filename)
+        self.job_dir, self.filenames = self._find_filenames()
+        self.job_params = self._parse_job_params(self.filenames[0])
 
-    def _find_filename(self) -> Tuple[Path, str]:
+    def _find_filenames(self) -> Tuple[Path, list[str]]:
         """
-        Finds a job file that matches the code distance and time steps.
+        Finds all job files that match the code distance, time steps and noise angle.
         Returns:
-            Tuple[Path, str]: The job directory and matching filename.
+            Tuple[Path, List[str]]: The job directory and a list of matching filenames.
         Raises:
-            FileNotFoundError: If no matching file is found.
+            FileNotFoundError: If no matching files are found.
         """
-        sub_dir = "/"+self.sub_dir if self.sub_dir is not None else ""
+        sub_dir = self.sub_dir if self.sub_dir is not None else ""
         job_dir = Path(f"./jobdata/aer{sub_dir}") if self.simulator else Path(f"./jobdata/ibm{sub_dir}")
-        # TODO fix this pattern match, currently you have to change the number of shots to match the desired file
+
+        # Matcha alla shots (en eller flera siffror)
         pattern = re.compile(rf"_({self.load_distance})_({self.t - 1})_(\d+)_0_({self.noise_angle})")
 
-        for filename in os.listdir(job_dir):
-            if pattern.search(filename):
-                return job_dir, filename
+        matching_files = [f for f in os.listdir(job_dir) if pattern.search(f)]
 
-        raise FileNotFoundError(
-            f"No file found in '{job_dir}' matching pattern '_{self.load_distance}_{self.t - 1}'"
-        )
+        if not matching_files:
+            raise FileNotFoundError(
+                f"No files found in '{job_dir}' matching pattern '_{self.load_distance}_{self.t - 1}_<shots>_0_{self.noise_angle}'"
+            )
+
+        return job_dir, matching_files
 
     def _parse_job_params(self, filename: str) -> dict:
         """
@@ -83,50 +87,97 @@ class IBMSampler:
             "noise_angle": noise_angle,
         }
 
-    def _load_json(self) -> Tuple[List[str], List[str]]:
+    def _load_json(self):
         """
-        Loads syndrome and final logical state data from JSON file.
+        Loads and concatenates syndrome and final logical state data from all matching JSON files.
         Returns:
-            Tuple[List[str], List[str]]: (syndrome bitstrings, final state bitstrings)
+            Tuple[np.ndarray, np.ndarray, np.ndarray]: (syndromes_soft, middle_states, final_state_soft)
         """
-        job_path = self.job_dir / self.filename
+        all_syndromes = []
+        all_final_states = []
 
-        with open(job_path) as f:
-            data = json.load(f, cls=RuntimeDecoder)
+        for filename in self.filenames:  # self.filenames sätts i __init__
+            print(filename)
+            job_path = self.job_dir / filename
+            with open(job_path) as f:
+                data = json.load(f, cls=RuntimeDecoder)
 
-        if self.simulator: # 
-            print("Simulator has no ability to produce IQ-data")
+            if self.simulator:
+                print("Simulator has no ability to produce IQ-data")
+                continue
 
-        else:
-            if "code_bit" in data[0].data.keys(): # New repetition code
-                assert data[0].data.code_bit.dtype == "complex128" # if IQ-output from rep.code
+            if "code_bit" in data[0].data.keys():
+                assert data[0].data.code_bit.dtype == "complex128"
 
                 raw_arrays = []
                 for name, reg in data[0].data.items():
                     if name == "code_bit":
                         final_state_raw = np.array(reg)
-                        final_state_raw = np.expand_dims(final_state_raw[:, ::-1], axis=0) # Input formatting to the SoftCalibrator class
+                        final_state_raw = np.expand_dims(final_state_raw[:, ::-1], axis=0)
                     else:
                         raw_arrays.append(reg)
-                raw_arrays = np.stack(raw_arrays, axis=0)[:, :, ::-1] # Reverse bit order, IBM's convention is right -> left read-out
-
-                # self.HMM = HMMDetectionProbability(raw_arrays)
-                # self.state_prob = self.HMM.compute_state_probabilities(raw_arrays)
-                # self.plot_flip_distribution(self.state_prob)
-                # R, S, Q = state_prob.shape
-                # syndromes_soft = state_prob.transpose(1, 0, 2).reshape(S, R * Q)
+                raw_arrays = np.stack(raw_arrays, axis=0)[:, :, ::-1]
 
                 self.syndrome_calibrator = SoftCalibrator(calibration_data=raw_arrays)
                 state_prob = self.syndrome_calibrator.compute_p_state(raw_arrays)
-                syndromes_soft = self._reset_adjust(state_prob, state_prob)
+                syndromes_soft = self._reset_adjust(state_prob)
 
                 self.final_state_calibrator = SoftCalibrator(calibration_data=final_state_raw)
                 final_state_soft = self.final_state_calibrator.compute_p_state(final_state_raw)[0]
-                # self.final_state_calibrator.visualize_iq_with_psoft(final_state_raw, final_state_soft, detector_index=1)
 
-        middle_states = None
+                all_syndromes.append(syndromes_soft)
+                all_final_states.append(final_state_soft)
 
-        return syndromes_soft, middle_states, final_state_soft
+        # Slå ihop längs shots-axeln
+        syndromes_concat = np.concatenate(all_syndromes, axis=0)
+        final_states_concat = np.concatenate(all_final_states, axis=0)
+
+        return syndromes_concat, None, final_states_concat
+
+    # def _load_json(self) -> Tuple[List[str], List[str]]:
+    #     """
+    #     Loads syndrome and final logical state data from JSON file.
+    #     Returns:
+    #         Tuple[List[str], List[str]]: (syndrome bitstrings, final state bitstrings)
+    #     """
+    #     job_path = self.job_dir / self.filename
+
+    #     with open(job_path) as f:
+    #         data = json.load(f, cls=RuntimeDecoder)
+
+    #     if self.simulator: # 
+    #         print("Simulator has no ability to produce IQ-data")
+
+    #     else:
+    #         if "code_bit" in data[0].data.keys(): # New repetition code
+    #             assert data[0].data.code_bit.dtype == "complex128" # if IQ-output from rep.code
+
+    #             raw_arrays = []
+    #             for name, reg in data[0].data.items():
+    #                 if name == "code_bit":
+    #                     final_state_raw = np.array(reg)
+    #                     final_state_raw = np.expand_dims(final_state_raw[:, ::-1], axis=0) # Input formatting to the SoftCalibrator class
+    #                 else:
+    #                     raw_arrays.append(reg)
+    #             raw_arrays = np.stack(raw_arrays, axis=0)[:, :, ::-1] # Reverse bit order, IBM's convention is right -> left read-out
+
+    #             # self.HMM = HMMDetectionProbability(raw_arrays)
+    #             # self.state_prob = self.HMM.compute_state_probabilities(raw_arrays)
+    #             # self.plot_flip_distribution(self.state_prob)
+    #             # R, S, Q = state_prob.shape
+    #             # syndromes_soft = state_prob.transpose(1, 0, 2).reshape(S, R * Q)
+
+    #             self.syndrome_calibrator = SoftCalibrator(calibration_data=raw_arrays)
+    #             state_prob = self.syndrome_calibrator.compute_p_state(raw_arrays)
+    #             syndromes_soft = self._reset_adjust(state_prob, state_prob)
+
+    #             self.final_state_calibrator = SoftCalibrator(calibration_data=final_state_raw)
+    #             final_state_soft = self.final_state_calibrator.compute_p_state(final_state_raw)[0]
+    #             # self.final_state_calibrator.visualize_iq_with_psoft(final_state_raw, final_state_soft, detector_index=1)
+
+    #     middle_states = None
+
+    #     return syndromes_soft, middle_states, final_state_soft
     
     def plot_flip_distribution(self, flip_p, detector_idx=None, bins=50):
         """
@@ -202,7 +253,7 @@ class IBMSampler:
             np.ndarray: Shape (shots, ancillas * time_steps)
         """
         ancillas = self.job_params["ancillas"]
-        shots = self.job_params["shots"]
+        shots = self.job_params["shots"] * len(self.filenames)
         init_bit = str(self.job_params["initial_logical_state"])
 
         initial_syndrome_soft = np.full((shots, ancillas), int(init_bit), dtype=np.uint8)
@@ -290,9 +341,7 @@ class IBMSampler:
         t0 = time.perf_counter()
         syndromes_soft, middle_states, final_state_soft = self._load_json()
         # Bygg hårda och mjuka syndrommatriser
-
         syndrome_soft_matrix = self._get_syndrome_matrix_soft(syndromes_soft, final_state_soft)
-
         # Mjuka det‐events (sannolikheter)
         detection_event_probs = self._extract_detection_event_probs(syndrome_soft_matrix)
 
@@ -316,7 +365,7 @@ class IBMSampler:
 
         if verbose:
             print("------------------------------------------------------------------------")
-            print(f"Loaded jobdata '{self.filename}' (d={self.load_distance}, t={self.t}) "
+            print(f"Loaded jobdata '{self.filenames}' (d={self.load_distance}, t={self.t}) "
             f"with {syndromes_soft.shape[0]} shots ({trivial_share_before*100:.1f}% trivial).", end=' ')
 
 
