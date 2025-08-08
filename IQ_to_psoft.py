@@ -50,6 +50,34 @@ class SoftCalibrator:
 
             self.models.append({'gmm': gmm, 'label_map': label_map})
 
+    def compute_p_state(self, iq_data: np.ndarray) -> np.ndarray:
+        """
+        Beräkna sannolikheten att tillståndet är 1 för varje IQ-sample.
+
+        Args:
+            iq_data: np.ndarray med form (R, S, D) med komplexa IQ-värden.
+
+        Returns:
+            p_state1: np.ndarray med form (R, S, D), med sannolikheten att tillståndet = 1.
+        """
+        if iq_data.ndim != 3:
+            raise ValueError("iq_data must be a 3D array (rounds, shots, detectors)")
+
+        R, S, D = iq_data.shape
+        flat = iq_data.reshape(-1, D)
+        p_state1_flat = np.zeros_like(flat, dtype=float)
+
+        for det in range(D):
+            feats = np.column_stack([flat[:, det].real, flat[:, det].imag])
+            probs = self.models[det]['gmm'].predict_proba(feats)
+
+            # Hämta komponent-index för state = 1
+            comp_for_state1 = self.models[det]['label_map'][1]
+
+            p_state1_flat[:, det] = probs[:, comp_for_state1]
+
+        return p_state1_flat.reshape(R, S, D)
+
     def compute_p_soft(self, iq_data: np.ndarray) -> np.ndarray:
         """
         Compute the soft misclassification probability P_soft for each IQ sample.

@@ -2,7 +2,7 @@ import numpy as np
 import pymatching
 
 from args import Args
-from dataloader_ibm import IBMSampler
+from dataloader_ibm_IQ import IBMSampler
 from utils import standard_deviation
 
 
@@ -44,7 +44,7 @@ class MWPMDecoder:
         Also computes a mask identifying trivial (all-zero) syndromes.
         """
         self.sampler = IBMSampler(self.args)
-        self.detections, self.flips = self.sampler.load_jobdata(verbose=True)
+        self.detections, self.flips, _, _ = self.sampler.load_jobdata(verbose=True)
     
     def _error_correlation_matrix_full(self) -> np.ndarray:
         """
@@ -168,7 +168,7 @@ class MWPMDecoder:
         trivial_count = np.sum(~nontrivial)
 
         # Logical accuracy over all validation samples
-        #print(f"Accuracy (excluding trivial syndromes): {correct/predicted.shape[0]:.5f}")
+        print(f"Accuracy (excluding trivial syndromes): {correct/predicted.shape[0]:.5f}, n_errors={predicted.shape[0]-correct}")
         logical_accuracy = (correct + trivial_count) / self.val_size
         logical_accuracy_err = standard_deviation(logical_accuracy, self.val_size)
 
@@ -188,7 +188,7 @@ class MWPMDecoder:
 
 
 if __name__ == "__main__":
-    args = Args(t=[50], distance=49, simulator_backend=False)
+    args = Args(t=[51], distance=15, simulator_backend=False, val_fraction=0.1, load_distance=None, sub_dir="/iq_data/training_data", noise_angle=0)
     decoder = MWPMDecoder(args, weight_scheme="p_ij")
     logical_accuracy, logical_accuracy_err = decoder.decode()
     print(f"Decoder completed with logical accuracy: {logical_accuracy:.5f}")

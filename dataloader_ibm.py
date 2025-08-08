@@ -41,7 +41,7 @@ class IBMSampler:
         sub_dir = "/"+self.sub_dir if self.sub_dir is not None else ""
         job_dir = Path(f"./jobdata/aer{sub_dir}") if self.simulator else Path(f"./jobdata/ibm{sub_dir}")
         # TODO fix this pattern match, currently you have to change the number os shots to match the desired file
-        pattern = re.compile(rf"_({self.load_distance})_({self.t - 1})_20000_0_{self.noise_angle}")
+        pattern = re.compile(rf"_({self.load_distance})_({self.t - 1})_(\d+)_0_({self.noise_angle})")
 
         for filename in os.listdir(job_dir):
             if pattern.search(filename):
@@ -265,9 +265,9 @@ class IBMSampler:
         sub_det = np.vstack(subsampled_dets)
         sub_flips = np.vstack(subsampled_flips)
 
-        if sub_det.shape[0] > 1_000_000: # Esnures maximum of 1 million shots per configuration
+        if sub_det.shape[0] > 1_00_000: # Esnures maximum of 1 million shots per configuration
             # Add random seed!
-            row_index = np.random.choice(sub_det.shape[0], size=1_000_000, replace=False)
+            row_index = np.random.choice(sub_det.shape[0], size=1_00_000, replace=False)
             sub_det   = sub_det[row_index]
             sub_flips = sub_flips[row_index]
 
