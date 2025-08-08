@@ -10,6 +10,7 @@ from args import Args
 from qiskit_ibm_runtime import RuntimeDecoder
 
 from IQ_to_psoft import SoftCalibrator
+from HMM_calibrator import HMMDetectionProbability
 
 class IBMSampler:
     """
@@ -42,8 +43,8 @@ class IBMSampler:
         """
         sub_dir = "/"+self.sub_dir if self.sub_dir is not None else ""
         job_dir = Path(f"./jobdata/aer{sub_dir}") if self.simulator else Path(f"./jobdata/ibm{sub_dir}")
-        # TODO fix this pattern match, currently you have to change the number os shots to match the desired file
-        pattern = re.compile(rf"_({self.load_distance})_({self.t - 1})_20000_0_{self.noise_angle}")
+        # TODO fix this pattern match, currently you have to change the number of shots to match the desired file
+        pattern = re.compile(rf"_({self.load_distance})_({self.t - 1})_(\d+)_0_({self.noise_angle})")
 
         for filename in os.listdir(job_dir):
             if pattern.search(filename):
@@ -93,134 +94,108 @@ class IBMSampler:
         with open(job_path) as f:
             data = json.load(f, cls=RuntimeDecoder)
 
-        if self.simulator: # Simulator has no ability to produce IQ-data
-            counts = data.get_counts()
-            syndromes, middle_states, final_state = [], [], []
-            for bitstring, freq in counts.items():
-                syndrome, middle, final = bitstring.split()
-                syndromes.extend([syndrome] * freq)
-                middle_states.extend([middle] * freq)
-                final_state.extend([final] * freq)
+        if self.simulator: # 
+            print("Simulator has no ability to produce IQ-data")
+
         else:
             if "code_bit" in data[0].data.keys(): # New repetition code
+                assert data[0].data.code_bit.dtype == "complex128" # if IQ-output from rep.code
 
-                if data[0].data.code_bit.dtype == "complex128": # if IQ-output from rep.code
-                    raw_arrays = []
-                    for name, reg in data[0].data.items():
-                        if name == "code_bit":
-                            final_state_raw = reg
-                            final_state_raw = np.expand_dims(final_state_raw, axis=0) # Input formatting to the SoftCalibrator class
-                        else:
-                            raw_arrays.append(reg)
+                raw_arrays = []
+                for name, reg in data[0].data.items():
+                    if name == "code_bit":
+                        final_state_raw = np.array(reg)
+                        final_state_raw = np.expand_dims(final_state_raw[:, ::-1], axis=0) # Input formatting to the SoftCalibrator class
+                    else:
+                        raw_arrays.append(reg)
+                raw_arrays = np.stack(raw_arrays, axis=0)[:, :, ::-1] # Reverse bit order, IBM's convention is right -> left read-out
 
-                    raw_arrays = np.stack(raw_arrays[::-1], axis=0) 
+                # self.HMM = HMMDetectionProbability(raw_arrays)
+                # self.state_prob = self.HMM.compute_state_probabilities(raw_arrays)
+                # self.plot_flip_distribution(self.state_prob)
+                # R, S, Q = state_prob.shape
+                # syndromes_soft = state_prob.transpose(1, 0, 2).reshape(S, R * Q)
 
-                    self.syndrome_calibrator = SoftCalibrator(calibration_data=raw_arrays)
-                    no_reset_soft = self.syndrome_calibrator.compute_p_soft(raw_arrays)
-                    no_reset = self.syndrome_calibrator.infer_hard(raw_arrays)
-                    syndromes, syndromes_soft = self._reset_adjust(no_reset, no_reset_soft)
-                    #self.syndrome_calibrator.visualize_iq_with_psoft(raw_arrays, no_reset_soft, detector_index=1)
+                self.syndrome_calibrator = SoftCalibrator(calibration_data=raw_arrays)
+                state_prob = self.syndrome_calibrator.compute_p_state(raw_arrays)
+                syndromes_soft = self._reset_adjust(state_prob, state_prob)
 
+                self.final_state_calibrator = SoftCalibrator(calibration_data=final_state_raw)
+                final_state_soft = self.final_state_calibrator.compute_p_state(final_state_raw)[0]
+                # self.final_state_calibrator.visualize_iq_with_psoft(final_state_raw, final_state_soft, detector_index=1)
 
-                    self.final_state_calibrator = SoftCalibrator(calibration_data=final_state_raw)
-                    final_state_soft = self.final_state_calibrator.compute_p_soft(final_state_raw)[0]
-                    final_state = self.final_state_calibrator.infer_hard(final_state_raw)[0]
-                    final_state_soft = final_state * (1 - final_state_soft) + (1 - final_state) * final_state_soft # convert to P(b=1), probability of being one
-                    #self.final_state_calibrator.visualize_iq_with_psoft(final_state_raw, final_state_soft, detector_index=0)
+        middle_states = None
 
-                else: #New repetition_code qiskit-qec
-                    # 1) Separera ut code_bit och bygg listan av arrayer
-                    raw_arrays = []
-                    for name, reg in data[0].data.items():
-                        bits = reg.get_bitstrings()
-                        if name == "code_bit":
-                            final_state = self._bitstrings_to_array(bits)
-                        else:
-                            raw_arrays.append(self._bitstrings_to_array(bits))
-                    raw_arrays = np.stack(raw_arrays[::-1], axis=0)  # Skapa en 3D-array med form (Rundor, Shots, Detektorer), right to left
-                    syndromes = self._reset_adjust(raw_arrays)
-
-            else: # Old repetition code
-                syndromes = self._bitstrings_to_array(data.data.syndromes.get_bitstrings())
-                final_state = self._bitstrings_to_array(data.data.final_state.get_bitstrings())
-
-        if hasattr(data[0].data, "middle_states"):
-            middle_states = self._bitstrings_to_array(data.data.middle_states.get_bitstrings())
-        else:
-            middle_states = None
-            print("Warning: Jobdata doesn't include middle_states!")
+        return syndromes_soft, middle_states, final_state_soft
+    
+    def plot_flip_distribution(self, flip_p, detector_idx=None, bins=50):
+        """
+        Plotta fördelningen av flip-sannolikheter.
         
-        # Reverse bit order, IBM's convention is right -> left read-out
-        syndromes = syndromes[:, ::-1]
-        syndromes_soft = syndromes_soft[:, ::-1]
-        if middle_states is not None:
-            middle_states = middle_states[:, ::-1]
-        final_state = final_state[:, ::-1]
-        final_state_soft = final_state_soft[:, ::-1]
+        flip_p: np.ndarray shape (S, R-1, D)
+        detector_idx: int eller None. Om None plottas alla detektorer ihop.
+        bins: antal histogram-bins.
+        """
+        if detector_idx is not None:
+            data = flip_p[:, :, detector_idx].ravel()
+            title = f"Flip probability distribution – Detector {detector_idx}"
+        else:
+            data = flip_p.ravel()
+            title = "Flip probability distribution – All detectors"
 
-        return syndromes, syndromes_soft, middle_states, final_state, final_state_soft
+        plt.figure(figsize=(6,4))
+        plt.hist(data, bins=bins, density=True, alpha=0.6, color='tab:blue', label='Histogram')
 
-    def _reset_adjust(self, no_reset, no_reset_soft = None):
-        """"
-        If reset=False is used in the repetition code, an adjustment is needed
-        also propagates the adjustment for the soft info.
+        try:
+            from scipy.stats import gaussian_kde
+            kde = gaussian_kde(data)
+            x_vals = np.linspace(0, 1, 500)
+            plt.plot(x_vals, kde(x_vals), color='black', lw=1.5, label='KDE')
+        except ImportError:
+            pass  # Om scipy inte finns, hoppa över KDE
+
+        plt.xlabel("Flip probability")
+        plt.ylabel("Density")
+        plt.yscale("log")
+        plt.title(title)
+        plt.legend()
+        plt.tight_layout()
+        plt.show()
+
+    def _reset_adjust(self, no_reset_soft):
+        """
+        Adjusts syndromes when reset=False is used in a repetition code.
+
+        Computes bitwise differences between successive rounds (left-to-right)
+        to infer detection events. Optionally computes soft (probabilistic)
+        syndromes if soft measurement data is provided.
+
+        Parameters
+        ----------
+        no_reset_soft : Optional[np.ndarray], default=None
+            Soft values representing P(measured=1), same shape as `no_reset`.
+
+        Returns
+        -------
+        syndromes_soft : Optional[np.ndarray]
+            Soft syndromes of shape (S, R * Q), or None.
         """
 
-        # Beräkna kumulativa syndrom-bitar (flipp/icke-flipp)
-        #    diff[i] = regs[i] != regs[i+1], form (R-1, S, Q)
-        diff = (no_reset[:-1] != no_reset[1:]).astype(np.uint8)
+        # Soft XOR diff (left to right)
+        p_diff = no_reset_soft[1:] * (1 - no_reset_soft[:-1]) + (1 - no_reset_soft[1:]) * no_reset_soft[:-1]
+        p_first = no_reset_soft[0:1]
+        syndrome_soft_stack = np.concatenate([p_first, p_diff], axis=0)
 
-        # Lägg till sista registret oförändrat som sista skikt
-        last = no_reset[-1:].astype(np.uint8)  # form (1, S, Q)
+        # self.plot_flip_distribution(syndrome_soft_stack)
+        # self.plot_flip_distribution(np.abs(syndrome_soft_stack-self.state_prob))
 
-        # Kombinera till syndrom-array form (R, S, Q)
-        syndrome_stack = np.concatenate([diff, last], axis=0)
+        # Reshape to (S, R*Q)
+        R, S, Q = syndrome_soft_stack.shape
+        syndromes_soft = syndrome_soft_stack.transpose(1, 0, 2).reshape(S, R * Q)
 
-        # Permutera så att första dimensionen är shots (S), sedan register×qubits
-        #    och sluttligen "flattenar" de två sista till en 2D-array
-        shots = syndrome_stack.shape[1]
-        R, _, Q = syndrome_stack.shape
-        syndromes = syndrome_stack.transpose(1, 0, 2).reshape(shots, R * Q)
+        return syndromes_soft
 
-        if no_reset_soft is not None:
-            # 1) Beräkna p = P(verkligt 1)
-            p = no_reset * (1 - no_reset_soft) + (1 - no_reset) * no_reset_soft
-
-            # 2) “Mjukt diff” precis som XOR men med sannolikheter
-            #    P(XOR=1) = p_t*(1-p_{t+1}) + (1-p_t)*p_{t+1}
-            p_diff = p[:-1] * (1 - p[1:]) + (1 - p[:-1]) * p[1:]   # → form (R-1, S, Q)
-
-            # 3) Ta med sista laget (oförändrat, dvs bär över sista p)
-            p_last = p[-1:]                                        # → form (1, S, Q)
-
-            # 4) Bygg upp “soft_syndrome_stack” och reshapa till (S, R*Q)
-            syndrome_soft_stack = np.concatenate([p_diff, p_last], axis=0)  # (R, S, Q)
-            R, S, Q = syndrome_soft_stack.shape
-
-            syndromes_soft = (
-                syndrome_soft_stack
-                .transpose(1, 0, 2)    # → (S, R, Q)
-                .reshape(S, R * Q)     # → (S, R*Q)
-            )
-            return syndromes, syndromes_soft
-        return syndromes
-
-    def _get_syndrome_matrix(self, mid_syndromes: List[str], final_state: List[str]) -> np.ndarray:
-        """
-        Builds the full syndrome matrix including initial and final logical readings.
-        Returns:
-            np.ndarray: Shape (shots, ancillas * time_steps)
-        """
-        ancillas = self.job_params["ancillas"]
-        shots = self.job_params["shots"]
-        init_bit = str(self.job_params["initial_logical_state"])
-        initial_syndrome = np.full((shots, ancillas), int(init_bit), dtype=np.uint8)
-
-        final_syndrome = final_state[:, :-1] ^ final_state[:, 1:]
-
-        return np.concatenate([initial_syndrome, mid_syndromes, final_syndrome], axis=1)
-
-    def _get_syndrome_matrix_soft(self, mid_syndromes_soft: List[str], final_state, final_state_soft: List[str]) -> np.ndarray:
+    def _get_syndrome_matrix_soft(self, mid_syndromes_soft: List[str], final_state_soft: List[str]) -> np.ndarray:
         """
         Builds the full syndrome matrix including initial and final logical readings.
         Returns:
@@ -235,18 +210,6 @@ class IBMSampler:
         final_syndrome_soft = final_state_soft[:,:-1] * (1 - final_state_soft[:,1:]) + (1 - final_state_soft[:,:-1]) * final_state_soft[:,1:]
         
         return np.concatenate([initial_syndrome_soft, mid_syndromes_soft, final_syndrome_soft], axis=1)
-
-    def _extract_detection_events(self, syndrome: np.ndarray) -> np.ndarray:
-        """
-        Converts syndrome matrix to detection event matrix (flips).
-        Returns:
-            np.ndarray: Boolean matrix of shape (shots, ancillas * (t - 1))
-        """
-        ancillas = self.job_params["ancillas"]
-        T = syndrome.shape[1] // ancillas
-        reshaped = syndrome.reshape(-1, T, ancillas)
-        flips = np.diff(reshaped, axis=1).astype(bool)
-        return flips.reshape(flips.shape[0], -1)
     
     def _extract_detection_event_probs(self, syndrome_soft: np.ndarray) -> np.ndarray:
         """
@@ -325,19 +288,19 @@ class IBMSampler:
             Tuple[np.ndarray, np.ndarray]: (detector events, final logical flips)
         """
         t0 = time.perf_counter()
-        syndromes, syndromes_soft, middle_states, final_state, final_state_soft = self._load_json()
-
+        syndromes_soft, middle_states, final_state_soft = self._load_json()
         # Bygg hårda och mjuka syndrommatriser
-        syndrome_matrix = self._get_syndrome_matrix(syndromes, final_state)
-        syndrome_soft_matrix = self._get_syndrome_matrix_soft(syndromes_soft, final_state, final_state_soft)
 
-        # Hårda det‐events
-        detection_events      = self._extract_detection_events(syndrome_matrix)
-        trivial_share_before = np.mean(~np.any(detection_events, axis=1))
+        syndrome_soft_matrix = self._get_syndrome_matrix_soft(syndromes_soft, final_state_soft)
+
         # Mjuka det‐events (sannolikheter)
         detection_event_probs = self._extract_detection_event_probs(syndrome_soft_matrix)
 
+        final_state = (final_state_soft >= 0.5).astype(int)
 
+        detection_events = (detection_event_probs >= 0.5).astype(int)
+
+        trivial_share_before = np.mean(~np.any(detection_events, axis=1))
         if self.load_distance == self.distance:
             # Hårda logiska flips
             logical_flips      = self._extract_logical_flips(middle_states, final_state, logical_index=0)
@@ -345,8 +308,6 @@ class IBMSampler:
             logical_flips_probs = self._extract_logical_flip_probs(final_state_soft, logical_index=0)
 
         else: # Here we use sampler to downsample to lower distances
-            print(final_state.shape)
-            print(final_state_soft.shape)
             logical_flips_all = self._extract_logical_flips(middle_states, final_state, logical_index=None)
             logical_flips_probs = self._extract_logical_flip_probs(final_state_soft, logical_index=None)
 
@@ -356,7 +317,7 @@ class IBMSampler:
         if verbose:
             print("------------------------------------------------------------------------")
             print(f"Loaded jobdata '{self.filename}' (d={self.load_distance}, t={self.t}) "
-            f"with {len(syndromes)} shots ({trivial_share_before*100:.1f}% trivial).", end=' ')
+            f"with {syndromes_soft.shape[0]} shots ({trivial_share_before*100:.1f}% trivial).", end=' ')
 
 
             if self.load_distance != self.distance:
@@ -424,8 +385,8 @@ class IBMSampler:
 
 
 if __name__ == "__main__":
-    args = Args(t=[6], distance=2, noise_angle=0.0, simulator_backend=False, load_distance=3)
+    args = Args(t=[51], distance=15, noise_angle=0.0, simulator_backend=False, load_distance=None, sub_dir="/iq_data/training_data")
     sampler = IBMSampler(args)
     detections, flips, detections_probs, flips_probs = sampler.load_jobdata(verbose=True)
-    print("Original detection events and logical flips shape:", detections.shape, detections_probs.shape)
+    print("Original detection events and soft shape:", detections.shape, detections_probs.shape)
     print("original Logical flips shape:", flips.shape, flips_probs.shape)
