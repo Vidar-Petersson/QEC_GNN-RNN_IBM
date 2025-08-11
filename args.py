@@ -1,48 +1,54 @@
 from dataclasses import dataclass, field
 import torch
-import numpy as np
+from typing import List, Optional, Union
+
 
 @dataclass
 class Args:
+    """Configuration parameters for repetition code data, graph creation, and model training."""
 
-    # Repetition code data 
-    error_rates: list[float] = field(default_factory=lambda: [0.001, 0.002, 0.003, 0.004, 0.005]) # Only applicable for stim
-    t: list[int] = field(default_factory=lambda: [99]) # Perhaps change from list to int datatype
-    dt: int = 2
-    distance: int = 3
-    load_distance: None | int = None
-    noise_angle: float = 0.0
-    sub_dir: None | str = None
+    # Repetition code data parameters
+    error_rates: List[float] = field(default_factory=lambda: [0.001, 0.002, 0.003, 0.004, 0.005])  # Physical error rates (STIM only, not used for Aer simulator)
+    t: int = 6  # Number of final detectors, including those inferred from perfect syndromes
+    dt: int = 2  # Temporal step between detection layers
+    distance: int = 3  # Code distance of the repetition code
+    noise_angle: float = 0.0  # Noise rotation angle (in radians)
+    sub_dir: Optional[str] = None  # Optional subdirectory for saving/loading data
+    simulator_backend: bool = True  # True = simulator backend, False = hardware data
 
-    sliding: bool = True
-    k: int = 20
-    seed: int | None = None
-    norm: float | int = torch.inf
-    train_all_times: bool = True # Evaluate if working correctly
-    pretrained_checkpoint: str = None   # Sökväg till .pt-fil att förträna från
-    resume: bool = False               # Om True, läs in optimizer‑ och scheduler‑status
-    simulator_backend: bool = True
-    patience: int = 20
+    # Detection event extraction
+    load_distance: Optional[int] = None  # If set, overrides `distance` when loading data and subsamples to distance
+    detection_threshold: float = 0.5  # Threshold for binary classification of detection events
 
-    # Torch
-    device: torch.device = field(
-    default_factory=lambda: torch.device(
-        "mps" if torch.backends.mps.is_available() else
-        "cuda" if torch.cuda.is_available() else
-        "cpu"
-    ))
-    batch_size: int = 2048
-    n_batches: int = 256 # Should be dynamic and depend on the number of shots in job
-    n_epochs: int = 600 # -:-
-    lr: float = 1e-3
-    min_lr: float = 1e-4
+    # Graph creation parameters
+    sliding: bool = True  # Use sliding time-window graph construction
+    k: int = 20  # Number of nearest neighbors for edge creation
+    seed: int = 42  # Random seed for reproducibility
+    norm: Union[float, int] = torch.inf  # Norm used for nearest-neighbor calculations
 
-    # Model
-    embedding_features: list = field(default_factory=lambda: [2, 32, 64, 128, 256])
-    hidden_size: int = 128 
-    n_gru_layers: int = 4
+    # Training parameters
+    train_all_times: bool = True  # Train using all time steps, not sure if working properly
+    pretrained_checkpoint: Optional[str] = None  # Path to `.pt` file with pretrained weights
+    resume: bool = False  # Resume optimizer/scheduler state from checkpoint, do not use if utilizing transfer learning or pre training on simulated data
+    patience: int = 20  # Epochs without validation improvement before early stopping
+    val_fraction: float = 0.1  # Fraction of total data used for validation
+    log_wandb: bool = False  # Log training metrics to Weights & Biases
 
-    # Training
-    val_fraction: float = 0.1 # Portion of data used for validation
-    pre_train: bool = False # If simulated data should be used for pre-training network
-    log_wandb: bool = False
+    # Torch-specific parameters
+    device: torch.device = field(  # Torch device for computation
+        default_factory=lambda: torch.device(
+            "mps" if torch.backends.mps.is_available() else
+            "cuda" if torch.cuda.is_available() else
+            "cpu"
+        )
+    )
+    batch_size: int = 2048  # Samples per training batch
+    n_batches: int = 256  # Batches per epoch (should be dynamic based on job shots), currently not used
+    n_epochs: int = 600  # Max training epochs (unless early stopping)
+    lr: float = 1e-3  # Initial learning rate
+    min_lr: float = 1e-4  # Minimum learning rate during decay
+
+    # Model architecture parameters
+    embedding_features: List[int] = field(default_factory=lambda: [2, 32, 64, 128, 256])  # Features per embedding layer
+    hidden_size: int = 128  # Hidden state size for GRU layers
+    n_gru_layers: int = 4  # Number of stacked GRU layers
