@@ -16,7 +16,7 @@ if __name__ == "__main__":
 
     args = Args(
         distance=args_cli.d,
-        t=[args_cli.t],
+        t=args_cli.t,
         load_distance=49,
         noise_angle=0.0251,
         dt=args_cli.dt,

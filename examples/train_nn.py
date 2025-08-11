@@ -26,7 +26,7 @@ if __name__ == "__main__":
 
     args = Args(
         distance=d,
-        t=[t],
+        t=t,
         dt=dt,
         noise_angle=0.0,
         sliding=True,
@@ -43,7 +43,8 @@ if __name__ == "__main__":
         simulator_backend = False,
         pretrained_checkpoint = None, #"./models/train_final_t_d3_t6_dt2_250710_120202True.pt",   # Sökväg till .pt-fil att förträna från
         resume = False,           # Om True, läs in optimizer‑ och scheduler‑status
-        sub_dir="iq_data"
+        sub_dir="iq_data",
+        detection_threshold=0.5
     )
 
     current_datetime = datetime.now().strftime("%y%m%d_%H%M%S")
