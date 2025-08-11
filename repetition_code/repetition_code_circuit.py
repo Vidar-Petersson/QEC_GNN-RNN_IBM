@@ -12,7 +12,7 @@
 # copyright notice, and modified files need to carry a notice indicating
 # that they have been altered from the originals.
 
-# pylint: disable=invalid-name
+# The following code has been taken and modified from the qiskit-qec library
 
 """Generates circuits based on repetition codes."""
 from copy import deepcopy
@@ -201,9 +201,7 @@ class RepetitionCodeCircuit:
         """
         # Apply RZ(alpha) on each code qubit for both logical circuits
         for log in ["0", "1"]:
-            # Insert error immediately after the syndrome measurement round
             for q in range(self.d):
-                # Coherent RZ rotation about Z-axis
                 self.circuit[log].rz(alpha, self.code_qubit[q])
 
     def readout(self):
@@ -216,4 +214,3 @@ class RepetitionCodeCircuit:
                 self.circuit[log].h(self.code_qubit)
             self.circuit[log].add_register(self.code_bit)
             self.circuit[log].measure(self.code_qubit, self.code_bit)
-
