@@ -2,7 +2,6 @@ from dataclasses import dataclass, field
 import torch
 from typing import List, Optional, Union
 
-
 @dataclass
 class Args:
     """Configuration parameters for repetition code data, graph creation, and model training."""

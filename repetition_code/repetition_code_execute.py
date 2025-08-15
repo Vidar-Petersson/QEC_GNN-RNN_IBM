@@ -1,15 +1,13 @@
+import os, sys
+sys.path.append(os.path.join(os.path.dirname(__file__), os.pardir)) # Add parent directory to Python path
+
 import json
-import os
-import sys
 
 from qiskit import transpile, QuantumCircuit
 from qiskit_ibm_runtime import QiskitRuntimeService, RuntimeEncoder, SamplerV2 as Sampler
 from qiskit_aer import AerSimulator
 
-# Add parent directory to Python path
-sys.path.append(os.path.join(os.path.dirname(__file__), os.pardir))
 from repetition_code.repetition_code_circuit import RepetitionCodeCircuit
-
 
 class RepetitionCodeExecute:
     """

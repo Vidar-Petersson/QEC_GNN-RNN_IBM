@@ -243,4 +243,11 @@ def plot_model_confidence(final_preds: torch.Tensor,
     ax2.set_ylim(0, 1)
     ax2.legend(loc='upper right')
 
-    plt.show() 
+    plt.show()
+
+def standard_deviation(p, n):
+    """
+    Standard deviation of the Binomial distribution.
+    https://en.wikipedia.org/wiki/Binomial_distribution
+    """
+    return np.sqrt(p * (1 - p) / n)

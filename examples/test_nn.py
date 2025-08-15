@@ -1,6 +1,6 @@
 import sys, os
 sys.path.append(os.path.join(os.path.dirname(__file__), os.pardir))
-from gru_decoder import GRUDecoder
+from decoder_binary.gru_decoder import GRUDecoder
 from args import Args
 import torch
 import argparse
