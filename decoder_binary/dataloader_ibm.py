@@ -50,7 +50,7 @@ class IBMSampler:
                 return job_dir, filename
 
         raise FileNotFoundError(
-            f"No file found in '{job_dir}' matching pattern '_{self.load_distance}_{self.t - 1}_20000_0_{self.noise_angle}'"
+            f"No file found in '{job_dir}' matching pattern '_{self.load_distance}_{self.t - 1}_<shots>_0_{self.noise_angle}'"
         )
 
     def _parse_job_params(self, filename: str) -> dict:

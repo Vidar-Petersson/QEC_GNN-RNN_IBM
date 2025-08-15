@@ -1,3 +1,5 @@
+import sys, os
+sys.path.append(os.path.join(os.path.dirname(__file__), os.pardir))  # Add parent dir for imports
 import numpy as np
 import pymatching
 
