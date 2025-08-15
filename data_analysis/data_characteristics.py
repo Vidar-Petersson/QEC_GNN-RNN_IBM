@@ -1,10 +1,7 @@
 import sys, os
 sys.path.append(os.path.join(os.path.dirname(__file__), os.pardir))
-import matplotlib.pyplot as plt
+
 import numpy as np
-
-from dataloader_ibm_IQ import IBMSampler
-
 
 def trivial(detections):
     trivial_syndrome_mask = np.any(detections, axis=1)
@@ -34,24 +31,5 @@ def analyze_class_balance(train_flips, val_flips=None):
 
 
 def analyze_pdet_time(detections, verbose=True):
-    detector1 = detections.mean(axis=0)[1::2]
-    detector2 = detections.mean(axis=0)[::2]
-    stderr1 = detections[:, 1::2].std(axis=0, ddof=1) / np.sqrt(detections.shape[0])
-    stderr2 = detections[:, ::2].std(axis=0, ddof=1) / np.sqrt(detections.shape[0])
-    mean1 = np.mean(detector1)
-    mean2 = np.mean(detector2)
-    stderr_mean1 = np.sqrt(np.mean(stderr1 ** 2))
-    stderr_mean2 = np.sqrt(np.mean(stderr2 ** 2))
-    if verbose:
-        print(f"Genomsnittlig detektionssannolikhet: Detektor 1: {mean1:.4f} ± {stderr_mean1:.4f}, "
-            f"Detektor 2: {mean2:.4f} ± {stderr_mean2:.4f}")
-    pdet_mean = np.mean([mean1, mean2])
+    pdet_mean = np.mean(detections)
     return pdet_mean
-
-
-if __name__ == "__main__":
-    sampler = IBMSampler(distance=3, t=50, simulator=False)
-    detection_events, observable_flips = sampler.load_jobdata()
-    trivial(detection_events)
-    analyze_class_balance(observable_flips)
-    analyze_pdet_time(detection_events)
