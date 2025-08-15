@@ -12,10 +12,9 @@
 # copyright notice, and modified files need to carry a notice indicating
 # that they have been altered from the originals.
 
-# The following code has been taken and modified from the qiskit-qec library
+# The following code has been taken and modified from the qiskit-qec library https://github.com/qiskit-community/qiskit-qec
 
 """Generates circuits based on repetition codes."""
-from copy import deepcopy
 from typing import List, Optional
 
 from qiskit import ClassicalRegister, QuantumCircuit, QuantumRegister

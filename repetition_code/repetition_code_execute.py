@@ -26,7 +26,7 @@ class RepetitionCodeExecute:
         simulator: bool,
         noise_angle: float,
         backend_name: str,
-        meas_type: str = "kerneled",
+        meas_type: str = "classified",
         subdir: str = "",
     ):
         """
@@ -72,6 +72,7 @@ class RepetitionCodeExecute:
         :return: Transpiled circuit
         """
         layout = None  # Set to fixed physical layout for reproducibility, if desired
+        # layout = [1, 3, 5, 7, 27, 29, 49, 51, 71, 73, 93, 95, 115, 113, 0, 2, 4, 6, 17, 28, 38, 50, 58, 72, 79, 94, 99, 114, 119]
 
         transpiled = transpile(
             circuit,
@@ -151,13 +152,13 @@ class RepetitionCodeExecute:
 if __name__ == "__main__":
     qec = RepetitionCodeExecute(
         code_distance=15,
-        time_steps=50,
-        shots=100_000,
+        time_steps=49,
+        shots=1_000_000,
         initial_state=0,
         simulator=False,
-        noise_angle=0,
+        noise_angle=0.1653,
         backend_name="ibm_pittsburgh",
-        meas_type="kerneled",  # Change to "classified" for binary data
-        subdir="/iq_data",
+        meas_type="classified",  # Change to "classified" for binary data, kerneled for IQ-data
+        subdir="/turning_the_knob",
     )
     qec.execute()
