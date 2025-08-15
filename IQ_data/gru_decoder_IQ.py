@@ -12,7 +12,7 @@ from torch.optim.lr_scheduler import ReduceLROnPlateau
 from args import Args
 from utils import (
     GraphConvLayer, TrainingLogger, group,
-    generate_batches_async, save_checkpoint, load_checkpoint
+    generate_batches_async, save_checkpoint, load_checkpoint, plot_model_confidence
 )
 from IQ_data.graph_creator_IQ import GraphCreator
 
