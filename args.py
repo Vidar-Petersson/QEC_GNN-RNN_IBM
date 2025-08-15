@@ -17,7 +17,7 @@ class Args:
     simulator_backend: bool = True  # True = simulator backend, False = hardware data
 
     # Detection event extraction
-    load_distance: Optional[int] = None  # If set, overrides `distance` when loading data and subsamples to distance
+    load_distance: Optional[int] = None  # If set, overrides `distance` when matching jobdata filename and subsamples to distance
     detection_threshold: float = 0.5  # Threshold for binary classification of detection events
 
     # Graph creation parameters
@@ -27,11 +27,11 @@ class Args:
     norm: Union[float, int] = torch.inf  # Norm used for nearest-neighbor calculations
 
     # Training parameters
-    train_all_times: bool = True  # Train using all time steps, not sure if working properly
+    train_all_times: bool = False  # Train using all time steps, not sure if working properly
     pretrained_checkpoint: Optional[str] = None  # Path to `.pt` file with pretrained weights
     resume: bool = False  # Resume optimizer/scheduler state from checkpoint, do not use if utilizing transfer learning or pre training on simulated data
     patience: int = 20  # Epochs without validation improvement before early stopping
-    val_fraction: float = 0.1  # Fraction of total data used for validation
+    val_fraction: float = 0.1  # Fraction of total data used for validation, should always be the same permutation due to seed
     log_wandb: bool = False  # Log training metrics to Weights & Biases
 
     # Torch-specific parameters
@@ -42,13 +42,13 @@ class Args:
             "cpu"
         )
     )
-    batch_size: int = 2048  # Samples per training batch
+    batch_size: int = 512  # Samples per training batch
     n_batches: int = 256  # Batches per epoch (should be dynamic based on job shots), currently not used
     n_epochs: int = 600  # Max training epochs (unless early stopping)
     lr: float = 1e-3  # Initial learning rate
     min_lr: float = 1e-4  # Minimum learning rate during decay
 
     # Model architecture parameters
-    embedding_features: List[int] = field(default_factory=lambda: [2, 32, 64, 128, 256])  # Features per embedding layer
+    embedding_features: List[int] = field(default_factory=lambda: [2, 32, 64, 128, 256])  # Features per embedding layer, change first element to 3 for IQ-data
     hidden_size: int = 128  # Hidden state size for GRU layers
     n_gru_layers: int = 4  # Number of stacked GRU layers
