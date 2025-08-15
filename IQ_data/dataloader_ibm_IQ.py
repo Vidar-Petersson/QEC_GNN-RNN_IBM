@@ -53,6 +53,7 @@ class IBMSampler:
         pattern = re.compile(rf"_({self.load_distance})_({self.t - 1})_(\d+)_({self.initial_state})_({self.noise_angle})")
 
         matching_files = [f for f in os.listdir(job_dir) if pattern.search(f)]
+        # matching_files = matching_files[:1]
 
         if not matching_files:
             raise FileNotFoundError(
@@ -138,51 +139,6 @@ class IBMSampler:
         final_states_concat = np.concatenate(all_final_states, axis=0)
 
         return syndromes_concat, None, final_states_concat
-
-    # def _load_json(self) -> Tuple[List[str], List[str]]:
-    #     """
-    #     Loads syndrome and final logical state data from JSON file.
-    #     Returns:
-    #         Tuple[List[str], List[str]]: (syndrome bitstrings, final state bitstrings)
-    #     """
-    #     job_path = self.job_dir / self.filename
-
-    #     with open(job_path) as f:
-    #         data = json.load(f, cls=RuntimeDecoder)
-
-    #     if self.simulator: # 
-    #         print("Simulator has no ability to produce IQ-data")
-
-    #     else:
-    #         if "code_bit" in data[0].data.keys(): # New repetition code
-    #             assert data[0].data.code_bit.dtype == "complex128" # if IQ-output from rep.code
-
-    #             raw_arrays = []
-    #             for name, reg in data[0].data.items():
-    #                 if name == "code_bit":
-    #                     final_state_raw = np.array(reg)
-    #                     final_state_raw = np.expand_dims(final_state_raw[:, ::-1], axis=0) # Input formatting to the SoftCalibrator class
-    #                 else:
-    #                     raw_arrays.append(reg)
-    #             raw_arrays = np.stack(raw_arrays, axis=0)[:, :, ::-1] # Reverse bit order, IBM's convention is right -> left read-out
-
-    #             # self.HMM = HMMDetectionProbability(raw_arrays)
-    #             # self.state_prob = self.HMM.compute_state_probabilities(raw_arrays)
-    #             # self.plot_flip_distribution(self.state_prob)
-    #             # R, S, Q = state_prob.shape
-    #             # syndromes_soft = state_prob.transpose(1, 0, 2).reshape(S, R * Q)
-
-    #             self.syndrome_calibrator = SoftCalibrator(calibration_data=raw_arrays)
-    #             state_prob = self.syndrome_calibrator.compute_p_state(raw_arrays)
-    #             syndromes_soft = self._reset_adjust(state_prob, state_prob)
-
-    #             self.final_state_calibrator = SoftCalibrator(calibration_data=final_state_raw)
-    #             final_state_soft = self.final_state_calibrator.compute_p_state(final_state_raw)[0]
-    #             # self.final_state_calibrator.visualize_iq_with_psoft(final_state_raw, final_state_soft, detector_index=1)
-
-    #     middle_states = None
-
-    #     return syndromes_soft, middle_states, final_state_soft
     
     def plot_flip_distribution(self, flip_p, detector_idx=None, bins=50):
         """
@@ -192,23 +148,27 @@ class IBMSampler:
         detector_idx: int eller None. Om None plottas alla detektorer ihop.
         bins: antal histogram-bins.
         """
+        ancillas = self.job_params["ancillas"]
+        T = flip_p.shape[1] // ancillas
+        # Reshape till (shots, T, ancillas)
+        resh = flip_p.reshape(-1, T, ancillas)
         if detector_idx is not None:
-            data = flip_p[:, :, detector_idx].ravel()
+            data = resh[:, :, detector_idx].ravel()
             title = f"Flip probability distribution - Detector {detector_idx}"
         else:
-            data = flip_p.ravel()
+            data = resh.ravel()
             title = "Flip probability distribution - All detectors"
 
         plt.figure(figsize=(6,4))
         plt.hist(data, bins=bins, density=True, alpha=0.6, color='tab:blue', label='Histogram')
 
-        try:
-            from scipy.stats import gaussian_kde
-            kde = gaussian_kde(data)
-            x_vals = np.linspace(0, 1, 500)
-            plt.plot(x_vals, kde(x_vals), color='black', lw=1.5, label='KDE')
-        except ImportError:
-            pass  # Om scipy inte finns, hoppa över KDE
+        # try:
+        #     from scipy.stats import gaussian_kde
+        #     kde = gaussian_kde(data)
+        #     x_vals = np.linspace(0, 1, 500)
+        #     plt.plot(x_vals, kde(x_vals), color='black', lw=1.5, label='KDE')
+        # except ImportError:
+        #     pass  # Om scipy inte finns, hoppa över KDE
 
         plt.xlabel("Flip probability")
         plt.ylabel("Density")
@@ -241,9 +201,6 @@ class IBMSampler:
         p_diff = no_reset_soft[1:] * (1 - no_reset_soft[:-1]) + (1 - no_reset_soft[1:]) * no_reset_soft[:-1]
         p_first = no_reset_soft[0:1]
         syndrome_soft_stack = np.concatenate([p_first, p_diff], axis=0)
-
-        # self.plot_flip_distribution(syndrome_soft_stack)
-        # self.plot_flip_distribution(np.abs(syndrome_soft_stack-self.state_prob))
 
         # Reshape to (S, R*Q)
         R, S, Q = syndrome_soft_stack.shape
@@ -328,6 +285,8 @@ class IBMSampler:
         syndrome_soft_matrix = self._get_syndrome_matrix_soft(syndromes_soft, final_state_soft)
         # Mjuka det‐events (sannolikheter)
         detection_events_probs = self._extract_detection_event_probs(syndrome_soft_matrix)
+
+        self.plot_flip_distribution(detection_events_probs)
 
         trivial_share_before = np.mean(~np.any((detection_events_probs >= self.detection_threshold).astype(int), axis=1)) # Calculates share of trivial graphs
 

@@ -6,7 +6,7 @@ import torch
 from tqdm import tqdm
 from args import Args
 from torch_geometric.nn.pool import knn_graph
-from dataloader_ibm_IQ import IBMSampler
+from IQ_data.dataloader_ibm_IQ import IBMSampler
 from data_analysis.data_characteristics import *
 
 class GraphCreator:

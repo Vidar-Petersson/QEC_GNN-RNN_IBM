@@ -4,6 +4,7 @@ sys.path.append(os.path.join(os.path.dirname(__file__), os.pardir))  # Add paren
 import time
 import torch
 import wandb
+import pandas as pd
 
 from torch import nn
 from torch.optim.lr_scheduler import LambdaLR
@@ -18,12 +19,12 @@ from utils import (
     standard_deviation, generate_batches_async,
     save_checkpoint, load_checkpoint
 )
-from graph_creator_IQ import GraphCreator
+from IQ_data.graph_creator_IQ import GraphCreator
 os.environ["WANDB_SILENT"] = "True"
 
 import torch.cuda as cuda
 
-from another_utils import plot_model_confidence
+from another_utils import plot_model_confidence, plot_model_confidence_with_failure_rate
 
 class GRUDecoder(nn.Module):
     """
@@ -176,8 +177,11 @@ class GRUDecoder(nn.Module):
                     loss = (loss_raw * mask).sum() / mask.sum()
                 else:
                     # If not training all times, we only consider the final label
+                    # loss = nn.functional.binary_cross_entropy(final_prediction, last_label_soft)
                     # loss = nn.functional.binary_cross_entropy(final_prediction, last_label)
-                    loss = nn.functional.binary_cross_entropy(final_prediction, last_label_soft)
+                    weight = 1.0 - torch.abs(last_label - last_label_soft)
+                    loss_raw = nn.functional.binary_cross_entropy(final_prediction, last_label, reduction="none")
+                    loss = (loss_raw * weight).sum() / weight.sum() # Vikta med soft
 
 
                 # Backpropagation and optimization step
@@ -195,27 +199,35 @@ class GRUDecoder(nn.Module):
             # — Valideringsfas —
             self.eval()
             with torch.no_grad():
+                val_total_correct = 0
+                val_total_elements = 0
+                val_total_loss = 0.0
+
                 for batch in validation_batches:
                     x, edge_index, batch_labels, label_map, edge_attr, aligned_flips, lengths, last_label, last_label_soft = batch
                     out, final_prediction = self.forward(x, edge_index, edge_attr, batch_labels, label_map)
+
                     if self.args.train_all_times:
                         mask     = torch.arange(out.size(1), device=out.device)[None, :] < lengths[:, None]
                         loss_raw = nn.functional.binary_cross_entropy(out, aligned_flips, reduction='none')
                         loss     = (loss_raw * mask).sum() / mask.sum()
                     else:
                         # loss = nn.functional.binary_cross_entropy(final_prediction, last_label)
-                        loss = nn.functional.binary_cross_entropy(final_prediction, last_label_soft)
+                        # loss = nn.functional.binary_cross_entropy(final_prediction, last_label_soft)
+                        weight = 1.0 - torch.abs(last_label - last_label_soft)
+                        loss_raw = nn.functional.binary_cross_entropy(final_prediction, last_label, reduction="none")
+                        loss = (loss_raw * weight).sum() / weight.sum() # Vikta med soft
 
+                    val_total_loss += loss.item()
+                    val_total_correct += torch.sum(torch.round(final_prediction) == last_label).item()
+                    val_total_elements += last_label.numel()
 
-                    epoch_val_loss += loss.item()
-                    epoch_val_acc  += (torch.sum(torch.round(final_prediction) == last_label) / torch.numel(last_label)).item()
-                    epoch_val_log_acc_num += torch.sum(torch.round(final_prediction) == last_label).item()
-            
-            epoch_train_loss /= num_train_batches
-            epoch_train_acc  /= num_train_batches
-            epoch_val_loss   /= len(validation_batches)
-            epoch_val_acc    /= len(validation_batches)
-            epoch_val_log_acc = (epoch_val_log_acc_num + gc.val_num_trivial) / gc.val_size
+                # Fysisk accuracy (alla samples)
+                epoch_val_acc = val_total_correct / val_total_elements
+                epoch_val_loss = val_total_loss / len(validation_batches)
+
+                # Logical accuracy (med triviala inkluderade)
+                epoch_val_log_acc = (val_total_correct + gc.val_num_trivial) / gc.val_size
 
             scheduler.step()
 
@@ -257,74 +269,105 @@ class GRUDecoder(nn.Module):
     
     def test_model(self) -> tuple:
         """
-        Utvärderar modellen på test-datasetet genom att loopa igenom alla batches
-        och beräkna genomsnittlig loss och accuracy. Mäter även tidsåtgång för data
-        och modell. Loggar resultat till wandb och/eller lokal logger om angivet.
+        Utvärderar modellen på test-datasetet och beräknar fysisk och logisk accuracy
+        med konsekvent viktning över alla exempel.
+        Om en sparad CSV finns används den istället för att köra om modellen.
         """
+        csv_path = "model_test_outputs.csv"
 
-        # Skapa dataset och batches
-        # Antingen återanvänd GraphCreator om du vill ny split, eller ta in dataset som parameter
-        gc = GraphCreator(self.args)
-        gc.train_val_split()  # För att säkerställa samma split‐logik
-          # Hämta test-batches
-        test_batches = list(gc.generate_batches(mode="validation")) # Yield everything into list
-        test_batches = [tuple(t.to(self.args.device) for t in batch) for batch in test_batches] # Move all validation data to GPU
+        if os.path.exists(csv_path):
+            print(f"Läser in sparade resultat från {csv_path}...")
+            df = pd.read_csv(csv_path)
+            all_final_preds = torch.tensor(df["final_preds"].values, dtype=torch.float32)
+            all_last_labels = torch.tensor(df["last_labels"].values, dtype=torch.int32)
+            all_last_labels_soft = torch.tensor(df["last_labels_soft"].values, dtype=torch.float32)
 
-        self.eval()
-        total_loss = 0.0
-        total_correct = 0
-        total_elements = 0
-        data_time = 0.0
-        model_time = 0.0
+            # Beräkna metrik från befintliga data
+            total_correct = torch.sum(torch.round(all_final_preds) == all_last_labels).item()
+            total_elements = all_last_labels.numel()
+            physical_acc = total_correct / total_elements
 
-        all_final_preds = []
-        all_last_labels = []
+            # Logical accuracy kräver att vi sparar gc.val_num_trivial och gc.val_size,
+            # så här får vi sätta till None om vi inte sparar det i CSV:n
+            logical_acc = None
+            avg_loss = None
 
-        with torch.no_grad():
-            for batch in tqdm(test_batches, desc="Evaluating model on test batches"):
-                t0 = time.perf_counter()
-                x, edge_index, batch_labels, label_map, edge_attr, aligned_flips, lengths, last_label, last_label_soft = batch
-                t1 = time.perf_counter()
+        else:
+            gc = GraphCreator(self.args)
+            gc.train_val_split()
 
-                out, final_pred = self.forward(x, edge_index, edge_attr, batch_labels, label_map)
-                t2 = time.perf_counter()
+            test_batches = list(gc.generate_batches(mode="validation"))
+            test_batches = [tuple(t.to(self.args.device) for t in batch) for batch in test_batches]
 
-                if self.args.train_all_times:
-                    mask = torch.arange(out.size(1), device=out.device)[None, :] < lengths[:, None]
-                    loss_raw = nn.functional.binary_cross_entropy(out, aligned_flips, reduction='none')
-                    loss = (loss_raw * mask).sum() / mask.sum()
-                else:
-                    loss = nn.functional.binary_cross_entropy(final_pred, last_label)
+            self.eval()
+            total_loss = 0.0
+            total_correct = 0
+            total_elements = 0
+            data_time = 0.0
+            model_time = 0.0
 
-                total_loss += loss.item()
-                total_correct += torch.sum(torch.round(final_pred) == last_label).item()
-                total_elements += last_label.numel()
+            all_final_preds = []
+            all_last_labels = []
+            all_last_labels_soft = []
 
-                data_time  += (t1 - t0)
-                model_time += (t2 - t1)
+            with torch.no_grad():
+                for batch in tqdm(test_batches, desc="Evaluating model on test batches"):
+                    t0 = time.perf_counter()
+                    x, edge_index, batch_labels, label_map, edge_attr, aligned_flips, lengths, last_label, last_label_soft = batch
+                    t1 = time.perf_counter()
 
-                all_final_preds.append(final_pred.cpu())
-                all_last_labels.append(last_label.cpu())
+                    out, final_prediction = self.forward(x, edge_index, edge_attr, batch_labels, label_map)
+                    t2 = time.perf_counter()
 
-        # Beräkna physical accuracy
-        avg_loss = total_loss / len(test_batches)
-        physical_acc = total_correct / total_elements
+                    if self.args.train_all_times:
+                        mask = torch.arange(out.size(1), device=out.device)[None, :] < lengths[:, None]
+                        loss_raw = nn.functional.binary_cross_entropy(out, aligned_flips, reduction='none')
+                        loss = (loss_raw * mask).sum() / mask.sum()
+                    else:
+                        loss = nn.functional.binary_cross_entropy(final_prediction, last_label_soft)
 
-        # Beräkna logical accuracy (inkluderar trivial-errors från GraphCreator)
-        logical_acc = (total_correct + gc.val_num_trivial) / gc.val_size
+                    total_loss += loss.item()
+                    total_correct += torch.sum(torch.round(final_prediction) == last_label).item()
+                    total_elements += last_label.numel()
 
-        # Skriv ut resultat
-        print(
-            f"Test Result → Loss: {avg_loss:.4f}, "
-            f"Physical Acc: {physical_acc:.4f}, "
-            f"Logical Acc: {logical_acc:.4f} "
-            f"(data_time={data_time:.3f}s, model_time={model_time:.3f}s)"
-        )
+                    data_time  += (t1 - t0)
+                    model_time += (t2 - t1)
 
-        
-        all_final_preds = torch.cat(all_final_preds)
-        all_last_labels = torch.cat(all_last_labels)
+                    all_final_preds.append(final_prediction.cpu())
+                    all_last_labels.append(last_label.cpu())
+                    all_last_labels_soft.append(last_label_soft.cpu())
 
+            # Physical accuracy (global viktning)
+            physical_acc = total_correct / total_elements
+
+            # Logical accuracy (inkluderar triviala)
+            logical_acc = (total_correct + gc.val_num_trivial) / gc.val_size
+
+            avg_loss = total_loss / len(test_batches)
+
+            print(
+                f"Test Result → Loss: {avg_loss:.4f}, "
+                f"Physical Acc: {physical_acc:.4f}, "
+                f"Logical Acc: {logical_acc:.4f} "
+                f"(data_time={data_time:.3f}s, model_time={model_time:.3f}s)"
+            )
+
+            # Konkatenera och platta till
+            all_final_preds = torch.cat(all_final_preds).view(-1)
+            all_last_labels = torch.cat(all_last_labels).view(-1)
+            all_last_labels_soft = torch.cat(all_last_labels_soft).view(-1)
+
+            # Spara till CSV
+            df = pd.DataFrame({
+                "final_preds": all_final_preds.numpy(),
+                "last_labels": all_last_labels.numpy(),
+                "last_labels_soft": all_last_labels_soft.numpy()
+            })
+            df.to_csv(csv_path, index=False)
+            print(f"Sparade modellutdata till {csv_path}")
+
+        # Plotta
         plot_model_confidence(all_final_preds, all_last_labels)
+        plot_model_confidence_with_failure_rate(all_final_preds, all_last_labels)
 
         return avg_loss, physical_acc, logical_acc
