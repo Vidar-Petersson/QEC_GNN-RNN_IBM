@@ -1,9 +1,10 @@
 import sys, os
 sys.path.append(os.path.join(os.path.dirname(__file__), os.pardir))  # Add parent dir for imports
+
 import numpy as np
 from itertools import product
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from repetition_code.repetition_code_execute import RepetitionCodeExecute  # Adjust if needed
+from repetition_code.repetition_code_execute import RepetitionCodeExecute 
 
 
 def run_qec_job(code_distance: int, time_steps: int, noise_angle: float):
@@ -20,9 +21,9 @@ def run_qec_job(code_distance: int, time_steps: int, noise_angle: float):
         time_steps=time_steps,
         shots=100_000,                # Number of shots per run
         initial_state=0,               # Start in logical |0>
-        simulator=False,               # Run on hardware
+        simulator=False,               # Run on IBM-hardware
         noise_angle=noise_angle,       # Injected noise rotation
-        subdir="/noise_angle_sweep"    # Output directory (change as needed)
+        subdir="/noise_angle"    # Output directory
     )
     qec.execute()
     return code_distance, time_steps, noise_angle
@@ -30,9 +31,9 @@ def run_qec_job(code_distance: int, time_steps: int, noise_angle: float):
 
 if __name__ == "__main__":
     # Parameter sweeps
-    code_distances = [5, 7, 9]  # Example: can be expanded
-    time_steps_list = [5, 11]   # Example: can be expanded
-    noise_angles = np.linspace(0, np.pi / 2, 5, endpoint=True)  # 0 to π/2 in 5 steps
+    code_distances = [49]
+    time_steps_list = [49] 
+    noise_angles = np.linspace(0, np.pi / 2, 20, endpoint=True)
 
     # Excluded combinations (optional)
     excluded_combinations = set()  # e.g., {(5, 5, 0.0)}
@@ -55,6 +56,6 @@ if __name__ == "__main__":
             d, t, a = futures[future]
             try:
                 future.result()
-                print(f"✅ Completed: code_distance={d}, time_steps={t}, noise_angle={a:.4f} rad")
+                print(f"Completed: code_distance={d}, time_steps={t}, noise_angle={a:.4f} rad")
             except Exception as e:
-                print(f"❌ Error: code_distance={d}, time_steps={t}, noise_angle={a:.4f} rad: {e}")
+                print(f"Error: code_distance={d}, time_steps={t}, noise_angle={a:.4f} rad: {e}")

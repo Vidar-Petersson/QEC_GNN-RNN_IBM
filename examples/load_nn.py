@@ -4,6 +4,8 @@ from gru_decoder import GRUDecoder
 from args import Args
 import torch
 
+### This file is not utilized and are threfore not updated and may be uncompatible
+
 if __name__ == "__main__":
     """
     Distance 3 model. 

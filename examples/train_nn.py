@@ -1,6 +1,6 @@
 import sys, os
 sys.path.append(os.path.join(os.path.dirname(__file__), os.pardir))
-from gru_decoder_IQ import GRUDecoder
+from gru_decoder import GRUDecoder
 from args import Args
 from utils import TrainingLogger
 import torch
@@ -10,10 +10,10 @@ import argparse
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument('--d', type=int, default=3)
-    parser.add_argument('--t', type=int, default=6)
+    parser.add_argument('--d', type=int, default=15)
+    parser.add_argument('--t', type=int, default=50)
     parser.add_argument('--dt', type=int, default=2)
-    parser.add_argument('--batch_size', type=int, default=2048) #2048*256//10
+    parser.add_argument('--batch_size', type=int, default=512) #2048*256//10
     parser.add_argument('--n_batches', type=int, default=1) # Irrelevant for IBM Data
     parser.add_argument('--n_epochs', type=int, default=200)
     parser.add_argument('--load_path', type=str, default=None)
@@ -36,14 +36,14 @@ if __name__ == "__main__":
         batch_size=args_cli.batch_size,
         n_batches=args_cli.n_batches,
         n_epochs=args_cli.n_epochs,
-        embedding_features=[3, 32, 64, 128, 256],
+        embedding_features=[2, 32, 64, 128, 256], # Change first element to 3 to include IQ-data
         hidden_size=128,
         n_gru_layers=4,
         log_wandb = True,
         simulator_backend = False,
         pretrained_checkpoint = None, #"./models/train_final_t_d3_t6_dt2_250710_120202True.pt",   # Sökväg till .pt-fil att förträna från
         resume = False,           # Om True, läs in optimizer‑ och scheduler‑status
-        sub_dir="iq_data",
+        sub_dir="/turning_the_knob",
         detection_threshold=0.5
     )
 
