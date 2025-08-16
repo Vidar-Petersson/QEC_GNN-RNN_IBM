@@ -16,7 +16,7 @@ if __name__ == "__main__":
         distance=args_cli.d,
         t=args_cli.t,
         load_distance=None,
-        noise_angle=0.1653,
+        noise_angle=0.3307,
         dt=args_cli.dt,
         sliding=True,
         batch_size=512,

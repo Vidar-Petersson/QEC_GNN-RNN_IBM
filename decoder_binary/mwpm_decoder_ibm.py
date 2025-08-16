@@ -195,7 +195,7 @@ class MWPMDecoder:
 
 
 if __name__ == "__main__":
-    args = Args(t=500, distance=49, simulator_backend=False, val_fraction=1, load_distance=None, sub_dir="/noise_angle_pittsburgh_500rep", noise_angle=0)
+    args = Args(t=500, distance=49, simulator_backend=False, val_fraction=0.1, load_distance=None, sub_dir="/noise_angle_pittsburgh_500rep", noise_angle=0)
     decoder = MWPMDecoder(args, weight_scheme="p_ij")
     logical_accuracy, logical_accuracy_err = decoder.decode()
     print(f"Decoder completed with logical accuracy: {logical_accuracy:.5f}")

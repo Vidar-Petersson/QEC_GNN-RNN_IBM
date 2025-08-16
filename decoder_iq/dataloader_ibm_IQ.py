@@ -333,7 +333,7 @@ class IBMSampler:
         subsampled_dets = []
         subsampled_flips = []
 
-        for start in [0]: # Blandar inte kvantbitar på kedjan range(full_anc - target_anc + 1):
+        for start in range(full_anc - target_anc + 1):
             window = det_reshaped[:, :, start : start + target_anc]
             subsampled_dets.append(window.reshape(shots, -1))
 

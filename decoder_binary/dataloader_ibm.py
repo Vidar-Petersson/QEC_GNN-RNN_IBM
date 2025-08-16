@@ -27,6 +27,7 @@ class IBMSampler:
         self.load_distance = args.load_distance if args.load_distance is not None else args.distance
         self.t = args.t
         self.noise_angle = round(args.noise_angle, 4)
+        self.seed = args.seed
 
         self.sub_dir = args.sub_dir
         self.job_dir, self.filename = self._find_filename()
@@ -268,8 +269,9 @@ class IBMSampler:
         sub_flips = np.vstack(subsampled_flips)
 
         if sub_det.shape[0] > 1_00_000: # Esnures maximum of 1 million shots per configuration
-            # Add random seed!
-            row_index = np.random.choice(sub_det.shape[0], size=1_00_000, replace=False)
+            print(f"Reducing number of shots to 1_000_000")
+            rng = np.random.default_rng(seed=self.seed)
+            row_index = rng.choice(sub_det.shape[0], size=1_000_000, replace=False)
             sub_det   = sub_det[row_index]
             sub_flips = sub_flips[row_index]
 

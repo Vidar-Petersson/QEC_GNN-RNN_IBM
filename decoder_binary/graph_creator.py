@@ -234,7 +234,7 @@ class GraphCreator:
         print("--------------------")
         print(f"Train/val-split: {self.train_detections.shape[0]} / {self.val_detections.shape[0]}")
         analyze_class_balance(self.train_flips, self.val_flips)
-        analyze_pdet_time(self.detections)
+        print(analyze_pdet_time(self.detections))
         print("--------------------")
 
     def generate_batches(self, mode: str = "training"):
