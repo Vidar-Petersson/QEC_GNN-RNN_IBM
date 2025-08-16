@@ -18,7 +18,7 @@ During this project, I have focused on the following areas:
 ### Generating data
 
 1. **repetition\_code\_circuit.py**
-   Constructs the circuit. Should not need modification; parameters control its behavior.
+   Constructs a lean repetition code circuit. Should not need modification; parameters control its behavior.
 
 2. **repetition\_code\_execute.py**
    Executes the circuit either on IBM hardware or the local Aer simulator.
@@ -26,12 +26,8 @@ During this project, I have focused on the following areas:
    * Note: Aer cannot generate IQ data.
    * For batch execution across parameters, use `examples/batch_execution_rep_code.py`.
 
-⚠ **Naming convention discrepancy:**
-File names include the number of actual time repetitions, while in this project `t` refers to the number of detectors along the time axis. To reconcile:
-
-```
-t_project = t_filename + 1
-```
+**Naming convention discrepancy:**
+File names include the number of actual time repetitions, while in this project `t` refers to the number of detectors along the time axis. To reconcile: ```t_project = t_filename + 1```
 
 ### Decoder
 
@@ -96,8 +92,7 @@ Instead of binary measurement outcomes, raw IQ data is collected, allowing uncer
 **Key difference from the paper:**
 They train classifiers using two calibration circuits; I use only execution data.
 
-<img src="figures/iq_clustering.png" alt="IQ clustering" height="400">  
-<img src="figures/iq_soft_info.png" alt="Soft information" height="400">  
+<img src="figures/iq_clustering.png" alt="IQ clustering" height="400"> <img src="figures/iq_soft_info.png" alt="Soft information" height="400">  
 
 Distribution of detection-event probabilities:
 
@@ -165,8 +160,7 @@ The model structure and hyperparameters were taken from the original surface-cod
 
 Inspired by [arXiv:2408.13687](https://arxiv.org/abs/2408.13687).
 
-<img src="figures/pdet_lepc.png" alt="linear" height="300">  
-<img src="figures/pdet_invLambda.png" alt="linear" height="300">  
+<img src="figures/pdet_lepc.png" alt="linear" height="300"> <img src="figures/pdet_invLambda.png" alt="linear" height="300">  
 
 **TODO:**
 
@@ -176,8 +170,7 @@ Inspired by [arXiv:2408.13687](https://arxiv.org/abs/2408.13687).
 
 We also examined distributions of the GNN decoder’s `final_prediction`:
 
-<img src="figures/dist_final_pred_linear.png" alt="linear" height="300">  
-<img src="figures/dist_final_pred_logit.png" alt="logit" height="300">  
+<img src="figures/dist_final_pred_linear.png" alt="linear" height="300">  <img src="figures/dist_final_pred_logit.png" alt="logit" height="300">  
 
 ---
 
