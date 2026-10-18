@@ -1,0 +1,45 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "qec-gnn-rnn-ibm"
+version = "0.1.0"
+description = "Data-driven decoding of the repetition code on IBM quantum hardware with a hybrid GNN+RNN decoder"
+readme = "README.md"
+license = { file = "LICENSE" }
+authors = [{ name = "Vidar Petersson" }]
+requires-python = ">=3.10"
+keywords = ["quantum error correction", "repetition code", "graph neural network", "decoder", "qiskit"]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "License :: OSI Approved :: MIT License",
+    "Topic :: Scientific/Engineering :: Physics",
+]
+# Lower bounds follow the environment the experiments were run in (see requirements.txt
+# for the exact pinned versions used on the Alvis cluster). PyTorch Geometric's compiled
+# extension (torch-cluster) must match the installed torch/CUDA version; see README.
+dependencies = [
+    "numpy>=1.26,<2",
+    "scipy>=1.11",
+    "pandas>=2.0",
+    "matplotlib>=3.7",
+    "scikit-learn>=1.3",
+    "tqdm>=4.66",
+    "torch>=2.5",
+    "torch-geometric>=2.6",
+    "torch-cluster>=1.6",
+    "pymatching>=2.2",
+    "qiskit>=1.0",
+    "qiskit-ibm-runtime>=0.30",
+    "qiskit-aer>=0.15",
+    "wandb",
+]
+
+[project.urls]
+Repository = "https://github.com/Vidar-Petersson/QEC_GNN-RNN_IBM"
+"Original project" = "https://github.com/Olfj/QEC_GNN-RNN"
+
+[tool.setuptools]
+py-modules = ["args", "training_utils"]
+packages = ["decoder_binary", "decoder_iq", "repetition_code", "data_analysis", "data_analysis.misc"]

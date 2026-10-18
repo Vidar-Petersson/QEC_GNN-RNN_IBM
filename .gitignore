@@ -15,3 +15,5 @@ __pycache__/
 /src/models/
 /stats
 *.json
+*.egg-info/
+build/
