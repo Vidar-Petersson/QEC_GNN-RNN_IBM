@@ -3,11 +3,11 @@
 ![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
-**Vidar Petersson** · Summer research internship 2025 at [WACQT](https://www.chalmers.se/en/centres/wacqt/) (Wallenberg Centre for Quantum Technology), supervised by Mats Granath and Moritz Lange
+**Vidar Petersson** · Summer research internship 2025 supervised by Mats Granath and Moritz Lange
 
 I ran repetition-code memory experiments on IBM's superconducting hardware (`ibm_pittsburgh`) and decoded them with a hybrid graph neural network + recurrent neural network (GNN+RNN). The decoder is trained directly on the experimental data and compared against a correlation-weighted MWPM baseline. The project builds on the master's thesis *Sequential Graph-Based Decoding of the Surface Code using a Hybrid Graph and Recurrent Neural Network Model* by Ole Larsen Fjeldså and Gustaf Jonasson Johansson ([Olfj/QEC_GNN-RNN](https://github.com/Olfj/QEC_GNN-RNN)), which used the model on simulated surface-code data.
 
-> The research code and results are from summer 2025. In 2026 I cleaned up the repository for sharing: I translated comments to English, fixed a few bugs, removed unused files, added a `pyproject.toml` and rewrote this README. The commit history shows exactly what changed.
+> The research code and results are from summer 2025.
 
 ---
 
