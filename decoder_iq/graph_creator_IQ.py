@@ -363,7 +363,7 @@ if __name__ == "__main__":
     gc = GraphCreator(args)
     gc.train_val_split()
     gc.print_info()
-    val_bathces = list(gc.generate_batches(mode="validation"))
+    val_batches = list(gc.generate_batches(mode="validation"))
     train_batches = list(gc.generate_batches(mode="training"))
 
     #print(f"Generated {len(train_batches)} training batches of size {args.batch_size}")

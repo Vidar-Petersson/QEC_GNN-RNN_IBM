@@ -67,9 +67,9 @@ class IBMSampler:
 
         job_id = parts[0]
         code_distance, t, shots, initial_logical_state = map(int, parts[1:5])
-        try: # For backwards compability
-            noise_angle = map(float, parts[5])
-        except:
+        try:  # Older job files have no noise-angle field
+            noise_angle = float(parts[5])
+        except (IndexError, ValueError):
             noise_angle = 0.0
 
         return {
@@ -268,7 +268,7 @@ class IBMSampler:
         sub_det = np.vstack(subsampled_dets)
         sub_flips = np.vstack(subsampled_flips)
 
-        if sub_det.shape[0] > 1_00_000: # Esnures maximum of 1 million shots per configuration
+        if sub_det.shape[0] > 1_000_000: # Ensures maximum of 1 million shots per configuration
             print(f"Reducing number of shots to 1_000_000")
             rng = np.random.default_rng(seed=self.seed)
             row_index = rng.choice(sub_det.shape[0], size=1_000_000, replace=False)
@@ -283,7 +283,7 @@ class IBMSampler:
 
 
 if __name__ == "__main__":
-    args = Args(t=[50], distance=49, noise_angle=0.2513, simulator_backend=False)
+    args = Args(t=50, distance=49, noise_angle=0.2513, simulator_backend=False)
     sampler = IBMSampler(args)
     detection_events, observable_flips = sampler.load_jobdata(verbose=True)
     print("Original detection events and logical flips shape:", detection_events.shape)

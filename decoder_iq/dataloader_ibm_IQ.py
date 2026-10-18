@@ -77,9 +77,9 @@ class IBMSampler:
 
         job_id = parts[0]
         code_distance, t, shots, initial_logical_state = map(int, parts[1:5])
-        try: # For backwards compability
-            noise_angle = map(float, parts[5])
-        except:
+        try:  # Older job files have no noise-angle field
+            noise_angle = float(parts[5])
+        except (IndexError, ValueError):
             noise_angle = 0.0
 
         return {
@@ -286,8 +286,6 @@ class IBMSampler:
         # Mjuka det‐events (sannolikheter)
         detection_events_probs = self._extract_detection_event_probs(syndrome_soft_matrix)
 
-        self.plot_flip_distribution(detection_events_probs)
-
         trivial_share_before = np.mean(~np.any((detection_events_probs >= self.detection_threshold).astype(int), axis=1)) # Calculates share of trivial graphs
 
         if self.load_distance == self.distance:
@@ -358,8 +356,9 @@ class IBMSampler:
 
 
 if __name__ == "__main__":
-    args = Args(t=51, distance=15, noise_angle=0.0, simulator_backend=False, load_distance=None, sub_dir="/iq_data/training_data")
+    args = Args(t=6, distance=3, noise_angle=0.0, simulator_backend=False, load_distance=None, sub_dir="/iq_data")
     sampler = IBMSampler(args)
-    detections, flips, detections_probs, flips_probs = sampler.load_jobdata(verbose=True)
-    print("Original detection events and soft shape:", detections.shape, detections_probs.shape)
+    detections_probs, flips_probs = sampler.load_jobdata(verbose=True)
+    print("Detection event probabilities shape:", detections_probs.shape, "logical flip probabilities shape:", flips_probs.shape)
+    sampler.plot_flip_distribution(detections_probs)
     print("original Logical flips shape:", flips.shape, flips_probs.shape)

@@ -10,7 +10,7 @@ from training_utils import standard_deviation
 
 class MWPMDecoder:
     """
-    Minimum Weight Perfect Matching (MWPM) decoder for surface code syndrome data.
+    Minimum Weight Perfect Matching (MWPM) decoder for repetition code syndrome data.
 
     This decoder uses PyMatching to construct a matching graph based on observed
     detection events from a quantum circuit, and predicts logical errors
@@ -46,7 +46,10 @@ class MWPMDecoder:
         Also computes a mask identifying trivial (all-zero) syndromes.
         """
         self.sampler = IBMSampler(self.args)
-        self.detections, self.flips, _, _ = self.sampler.load_jobdata(verbose=True)
+        detection_probs, flip_probs = self.sampler.load_jobdata(verbose=True)
+        # MWPM does not use soft information: threshold the probabilities to hard values
+        self.detections = detection_probs >= self.args.detection_threshold
+        self.flips = flip_probs >= 0.5
 
     def train_val_split(self) -> None:
         num_total = self.detections.shape[0]
@@ -195,7 +198,7 @@ class MWPMDecoder:
 
 
 if __name__ == "__main__":
-    args = Args(t=50, distance=15, simulator_backend=False, val_fraction=0.1, load_distance=None, sub_dir="/turning_the_knob", noise_angle=0.1653)
+    args = Args(t=6, distance=3, simulator_backend=False, val_fraction=0.1, load_distance=None, sub_dir="/iq_data", noise_angle=0.0)
     decoder = MWPMDecoder(args, weight_scheme="p_ij")
     logical_accuracy, logical_accuracy_err = decoder.decode()
     print(f"Decoder completed with logical accuracy: {logical_accuracy:.5f}")

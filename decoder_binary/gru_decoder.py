@@ -92,9 +92,6 @@ class GRUDecoder(nn.Module):
             if self.args.resume:
                 start_epoch = ckpt_epoch + 1
 
-        # Mindre batch size för bättre generalisering
-        self.args.batch_size = 512
-
         validation_batches = list(gc.generate_batches(mode="validation"))
         validation_batches = [tuple(t.to(self.args.device) for t in batch) for batch in validation_batches]
 

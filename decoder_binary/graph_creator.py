@@ -303,7 +303,7 @@ class GraphCreator:
             )
 
 if __name__ == "__main__":
-    args = Args(t=[50], distance=25, sliding=True, dt=2, simulator_backend=False)
+    args = Args(t=50, distance=25, sliding=True, dt=2, simulator_backend=False)
     gc = GraphCreator(args)
     gc.train_val_split()
     gc.print_info()

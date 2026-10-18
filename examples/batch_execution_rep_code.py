@@ -23,7 +23,8 @@ def run_qec_job(code_distance: int, time_steps: int, noise_angle: float):
         initial_state=0,               # Start in logical |0>
         simulator=False,               # Run on IBM-hardware
         noise_angle=noise_angle,       # Injected noise rotation
-        subdir="/noise_angle"    # Output directory
+        backend_name="ibm_pittsburgh", # IBM Quantum backend
+        subdir="/noise_angle"          # Output directory
     )
     qec.execute()
     return code_distance, time_steps, noise_angle

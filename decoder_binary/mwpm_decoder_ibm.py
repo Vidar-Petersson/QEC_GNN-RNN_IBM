@@ -4,13 +4,13 @@ import numpy as np
 import pymatching
 
 from args import Args
-from dataloader_ibm import IBMSampler
+from decoder_binary.dataloader_ibm import IBMSampler
 from training_utils import standard_deviation
 
 
 class MWPMDecoder:
     """
-    Minimum Weight Perfect Matching (MWPM) decoder for surface code syndrome data.
+    Minimum Weight Perfect Matching (MWPM) decoder for repetition code syndrome data.
 
     This decoder uses PyMatching to construct a matching graph based on observed
     detection events from a quantum circuit, and predicts logical errors
