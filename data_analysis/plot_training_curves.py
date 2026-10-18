@@ -1,7 +1,14 @@
+import sys
+from pathlib import Path
+sys.path.append(str(Path(__file__).resolve().parent))  # Make `misc` importable from any working directory
+
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
 import misc.plot_settings
+
+DATA_DIR = Path(__file__).resolve().parent
+FIGURE_DIR = DATA_DIR.parent / "figures"
 
 def epsilon_from_PL(PL, T):
     PL = np.asarray(PL)
@@ -15,13 +22,13 @@ def plot_training_curves(df, steps, runs, mwpm_vals, T=50):
         plt.axhline(y=epsilon_from_PL(1 - acc_val, T), ls='--', c=color, label=label)
 
 def main():
-    df = pd.read_csv("./data_analysis/training_curves/wandb_export_2025-08-14T11_40_36.869+02_00.csv")
+    df = pd.read_csv(DATA_DIR / "training_curves" / "wandb_export_2025-08-14T11_40_36.869+02_00.csv")
     steps = df["Step"]
 
     runs = [
-        ("0.0_250813_131850", r"$\alpha=0$"),
-        ("0.1653_250813_133742", r"$\alpha=0.1653$"),
-        ("0.3307_250813_145046", r"$\alpha=0.3307$"),
+        ("0.0_250813_131850", r"GNN+RNN $\alpha=0$"),
+        ("0.1653_250813_133742", r"GNN+RNN $\alpha=0.1653$"),
+        ("0.3307_250813_145046", r"GNN+RNN $\alpha=0.3307$"),
     ]
     mwpm_vals = [
         (0.98393, r"MWPM ($p_{ij}$) $\alpha=0$", "tab:blue"),
@@ -32,12 +39,13 @@ def main():
     plt.figure(figsize=(8, 5))
     plot_training_curves(df, steps, runs, mwpm_vals)
     plt.yscale("log")
-    plt.xlabel("Epok")
-    plt.ylabel("Logiskt fel per cykel")
-    plt.title(r"$\epsilon$ för d=15, t=50, shots=1e6, Binär-data från IBM Pittsburg")
+    plt.xlabel("Epoch")
+    plt.ylabel(r"Logical error per cycle $\epsilon$")
+    plt.title(r"$d=15$, $t=50$, $10^6$ shots, binary data from IBM Pittsburgh")
     plt.legend()
     plt.grid(True, which='both', ls='dotted')
     plt.tight_layout()
+    plt.savefig(FIGURE_DIR / "training_curves_binary.png", dpi=200)
     plt.show()
 
 if __name__ == "__main__":

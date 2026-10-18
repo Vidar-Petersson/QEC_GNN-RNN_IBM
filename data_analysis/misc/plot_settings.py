@@ -46,14 +46,13 @@ def set_square_size(width, fraction=1):
 
     return fig_dim
 
+import shutil
 import matplotlib.pyplot as plt
-import locale
-from cycler import cycler
 
   
 tex_fonts = {
 
-    # Use 10pt font in plots, to match 10pt font in document
+    # Font sizes chosen to match the LaTeX report
     "axes.labelsize": 12,
     "axes.titlesize": 12,
     "font.size": 12,
@@ -97,10 +96,6 @@ tex_fonts = {
     "grid.linewidth" : 0.5,
     "lines.linewidth" : 1.,
 
-    # Remove legend frame
-    #"legend.frameon" : False,
-    "axes.formatter.use_locale" : True,
-
     # Always save as 'tight'
     "savefig.bbox" : "tight",
     "savefig.pad_inches" : 0.02,
@@ -111,19 +106,13 @@ tex_fonts = {
     "axes.formatter.use_mathtext" : True,
     "mathtext.fontset" : "cm",
 
-    # Use LaTeX for math formatting
-    "text.usetex" : True,
-    #"text.latex.preamble" : "\usepackage{amsmath} \usepackage{amssymb}",
-    'text.latex.preamble' : r'\usepackage{icomma} \usepackage{gensymb}'
+    # Use LaTeX for text rendering if a LaTeX installation is available
+    "text.usetex" : shutil.which("latex") is not None,
+    'text.latex.preamble' : r'\usepackage{gensymb}'
 
 }
 
-# axes.prop_cycle : (cycler('color', ['k', 'r', 'b', 'g']) + cycler('ls', ['-', '--', ':', '-.']))
-
-locale.setlocale(locale.LC_NUMERIC, "sv_SE.UTF-8")
 plt.rcParams.update(tex_fonts)
 
-width = 455.24411 #Bredden på latex dokumentet  
-plt.rcParams["figure.figsize"] = set_size(width, fraction=1) #Får inte finnas plt.tight_layout() i andra filen
-#plt.rcParams["figure.figsize"] = set_square_size(width, fraction=0.4) #Får inte finnas plt.tight_layout() i andra filen
-plt.style.context('seaborn-whitegrid')
+width = 455.24411  # Text width of the LaTeX document in pt
+plt.rcParams["figure.figsize"] = set_size(width, fraction=1)

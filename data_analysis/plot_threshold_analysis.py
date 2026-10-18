@@ -20,8 +20,8 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s: %(mes
 
 def epsilon_from_PL(PL: float, T: int) -> float:
     """
-    Invertera PL (logisk felprob per T cykler) till epsilon per cykel.
-    Clippar vid 0.5 för ogiltiga/stora PL.
+    Convert PL (logical error probability over T cycles) to the error per cycle epsilon.
+    Clipped at 0.5 for invalid/large PL.
     """
     if PL >= 0.5:
         return 0.5
@@ -29,10 +29,10 @@ def epsilon_from_PL(PL: float, T: int) -> float:
 
 def epsilon_err_from_PL(PL: float, dPL: float, T: int) -> float:
     """
-    Propagera osäkerheten dPL till epsilon.
-    Derivatan av epsilon(PL) är:
+    Propagate the uncertainty dPL to epsilon.
+    The derivative of epsilon(PL) is:
       dε/dPL = (1/T) * (1 - 2PL)^(1/T - 1)
-    Så: deps = |deps/dPL| * dPL
+    so: deps = |deps/dPL| * dPL
     """
     if PL >= 0.5:
         return 0.0
@@ -40,18 +40,22 @@ def epsilon_err_from_PL(PL: float, dPL: float, T: int) -> float:
     return abs(deriv) * dPL
 
 # --- IO ---
+FIGURE_DIR = Path(__file__).resolve().parent.parent / "figures"
+
+
 def get_default_data_path() -> Path:
-    return Path(__file__).resolve().parent / "data" / "data_pittsburgh_4.csv"
+    return Path(__file__).resolve().parent / "data" / "threshold_analysis.csv"
 
 
 def load_existing_dataframe(path: Path) -> pd.DataFrame:
     if path.exists():
-        df = pd.read_csv(path)
-        logging.info(f"Data laddad från {path} ({len(df)} rader).")
+        df = pd.read_csv(path, skipinitialspace=True)  # The CSV is column-aligned with padding
+        df.columns = df.columns.str.strip()
+        logging.info(f"Loaded data from {path} ({len(df)} rows).")
         return df
     else:
         cols = ["distance", "alpha", "order", "pdet", "eps", "eps_err"]
-        logging.info("Ingen befintlig fil hittad. Skapar tom DataFrame.")
+        logging.info("No existing file found. Creating empty DataFrame.")
         return pd.DataFrame(columns=cols)
 
 
@@ -60,11 +64,11 @@ def append_row_to_csv(path: Path, row: Dict[str, Any], write_header: bool) -> No
     one_row_df.to_csv(path, mode="a", header=write_header, index=False)
 
 
-# --- datainsamling ---
+# --- Data collection (requires jobdata) ---
 def measure_single_run(distance: int, alpha: float, rounds: int) -> Tuple[float, float]:
     """
-    Skapa decoder, kör decode och returnera (pdet_mean, eps, eps_err).
-    Returnerar endast eps/fel och pdet; anropande kod bygger rad-dict. (Så att den kan fortsätta köra efter ev. krasch)
+    Create a decoder, run decode and return (pdet_mean, eps, eps_err).
+    Only returns the values; the caller builds the row dict (so that collection can continue after a crash).
     """
     args = Args(
         t=rounds,
@@ -96,17 +100,18 @@ def run_data_collection(
     data_csv: Path,
 ) -> pd.DataFrame:
     """
-    Loopar över distances x alphas och sparar nya rader i CSV löpande.
-    Returnerar komplett DataFrame (existerande + nya).
+    Loop over distances x alphas and append new rows to the CSV as they are measured.
+    (distance, alpha) pairs already in the CSV are skipped.
+    Returns the complete DataFrame (existing + new rows).
     """
     df = load_existing_dataframe(data_csv)
     file_exists = data_csv.exists()
     existing = set(zip(df["distance"].astype(float), df["alpha"].astype(float)))
 
-    # säkerställ att data-mappen finns
+    # Make sure the data directory exists
     data_csv.parent.mkdir(parents=True, exist_ok=True)
 
-    progress = tqdm([(d, a) for d in distances for a in alphas], desc="Mäter", unit="run")
+    progress = tqdm([(d, a) for d in distances for a in alphas], desc="Measuring", unit="run")
 
     for d, alpha in progress:
         if (float(d), float(alpha)) in existing:
@@ -115,7 +120,7 @@ def run_data_collection(
         try:
             pdet_mean, eps, eps_err = measure_single_run(d, alpha, rounds)
         except Exception as e:
-            logging.exception(f"Fel vid mätning d={d}, alpha={alpha}: {e}")
+            logging.exception(f"Measurement failed for d={d}, alpha={alpha}: {e}")
             continue
 
         row = {
@@ -133,14 +138,14 @@ def run_data_collection(
         df = pd.concat([df, pd.DataFrame([row])], ignore_index=True)
 
         logging.info(
-            f"Ny data: d={d}, alpha={alpha:.4f}, pdet={pdet_mean:.2e}, eps={eps:.2e} (sparad)."
+            f"New data: d={d}, alpha={alpha:.4f}, pdet={pdet_mean:.2e}, eps={eps:.2e} (saved)."
         )
 
     return df
 
-# --- Plotting & analys ---
+# --- Plotting & analysis ---
 def prepare_grouped_data(df: pd.DataFrame, distances: List[int]) -> Tuple[Dict[int, np.ndarray], Dict[int, np.ndarray], Dict[int, np.ndarray]]:
-    # Filtrera ut oönskade eps (maxvärde 0.5)
+    # Filter out saturated eps (max value 0.5)
     df_clean = df[df["eps"] != 0.5].copy()
     groups = df_clean.groupby("distance")
     pdet_data = {}
@@ -164,17 +169,17 @@ def plot_error_vs_pdet(
     eps_data: Dict[int, np.ndarray],
     eps_err_data: Dict[int, np.ndarray],
     distances: List[int],
+    out_path: Optional[Path] = None,
 ) -> Tuple[List[float], List[float], List[int]]:
-    """Plottar epsilon vs p_det på log-log och returnerar uppmätta och teoretiska slopes."""
+    """Plot epsilon vs p_det on log-log axes and return measured and theoretical slopes."""
     m_measured: List[float] = []
     m_theoretical: List[float] = []
     d_list: List[int] = []
 
-    plt.figure()
+    plt.figure(figsize=(9, 9))
     n_colors = len(distances)
-    cmap = plt.get_cmap('tab20', len(distances))
-    # cmap = plt.cm.get_cmap("turbo", n_colors)
-    colors = [cmap(i) for i in range(n_colors)]
+    cmap = plt.get_cmap("viridis")  # Sequential colormap: one distinct color per distance
+    colors = [cmap(i / max(n_colors - 1, 1)) for i in range(n_colors)]
 
     for idx, d in enumerate(distances):
         x = pdet_data.get(d, np.array([]))
@@ -184,10 +189,10 @@ def plot_error_vs_pdet(
             continue
 
         eb = plt.errorbar(x, y, yerr=y_err, fmt="o", label=f"d={d}", color=colors[idx])
-        # sänk transparensen på errorbars
+        # Make the error bars semi-transparent
         [bar.set_alpha(0.3) for bar in eb[2]]
 
-        # mask för giltiga punkter för fit
+        # Mask of valid points for the fit
         mask = (x > 0) & (y > 0) & (x < 0.3)
         if np.sum(mask) > 1:
             # log-log fit: ln y = m ln x + b
@@ -202,11 +207,13 @@ def plot_error_vs_pdet(
 
     plt.xscale("log")
     plt.yscale("log")
-    plt.xlabel(r"Medelvärde $p_{det}$")
-    plt.ylabel(r"Logisk fel per cykel $\epsilon$")
-    plt.legend(title="Kodavstånd", bbox_to_anchor=(1.05, 1), loc="upper left")
+    plt.xlabel(r"Mean detection probability $p_{det}$")
+    plt.ylabel(r"Logical error per cycle $\epsilon$")
+    plt.legend(title="Code distance", bbox_to_anchor=(1.05, 1), loc="upper left")
     plt.grid(True, which="both", linestyle="dotted")
     plt.tight_layout()
+    if out_path:
+        plt.savefig(out_path, dpi=150)
     plt.show()
     return m_measured, m_theoretical, d_list
 
@@ -223,12 +230,12 @@ def fit_slope_vs_distance(d_list: List[int], m_measured: List[float], out_path: 
     plt.figure()
     plt.scatter(d_arr, m_arr, color="k", marker="x")
     plt.plot(d_fit, m_fit, "r--", label=fr"Fit: $m = {a_fit:.4f}d + {b_fit:.4f}$")
-    plt.xlabel(r"Kodavstånd $d$")
-    plt.ylabel(r"Uppmätt lutning")
+    plt.xlabel(r"Code distance $d$")
+    plt.ylabel(r"Measured slope $m$")
     plt.grid(True, which="both", linestyle="dotted")
     plt.legend()
     plt.show()
-    logging.info(f"Fitresultat: a = {a_fit:.6f}, b = {b_fit:.6f}")
+    logging.info(f"Fit result: a = {a_fit:.6f}, b = {b_fit:.6f}")
     return float(a_fit), float(b_fit)
 
 
@@ -236,9 +243,9 @@ def compare_measured_theoretical(m_measured: List[float], m_theoretical: List[fl
     plt.figure()
     plt.scatter(m_theoretical, m_measured, marker="o")
     lim = [min(m_theoretical), max(m_theoretical)]
-    plt.plot(lim, lim, linestyle="--")  # y=x-linje
-    plt.xlabel("Teoretisk lutning (d+1)/2")
-    plt.ylabel("Uppmätt lutning m")
+    plt.plot(lim, lim, linestyle="--")  # y = x line
+    plt.xlabel("Theoretical slope (d+1)/2")
+    plt.ylabel("Measured slope m")
     plt.grid(True, which="both", linestyle="dotted")
     plt.tight_layout()
     plt.show()
@@ -250,7 +257,7 @@ def plot_invLambda_vs_pdet(df: pd.DataFrame, out_path: Optional[Path] = None) ->
     invLambda_list: List[float] = []
 
     for alpha, group in groups_alpha:
-        # sortera per order
+        # Sort by order
         ordered = group.sort_values("order")
         epsilons = ordered["eps"].values
         orders_arr = ordered["order"].values
@@ -268,10 +275,10 @@ def plot_invLambda_vs_pdet(df: pd.DataFrame, out_path: Optional[Path] = None) ->
             pdet_avg_list.append(float(pdet_avg))
             invLambda_list.append(float(1.0 / Lambda))
         else:
-            logging.debug(f"alpha={alpha:.4f}: för få giltiga datapunkter för curve_fit - hoppade över.")
+            logging.debug(f"alpha={alpha:.4f}: too few valid data points for curve_fit - skipped.")
 
     if len(pdet_avg_list) == 0:
-        logging.warning("Inga punkter för invLambda vs pdet-plot.")
+        logging.warning("No points for the invLambda vs pdet plot.")
         return
 
     p = np.polyfit(pdet_avg_list, invLambda_list, 1)
@@ -282,17 +289,19 @@ def plot_invLambda_vs_pdet(df: pd.DataFrame, out_path: Optional[Path] = None) ->
 
     xs = np.linspace(min(pdet_avg_list), max(pdet_avg_list), 200)
     plt.plot(xs, fit_line(xs), linestyle="solid", alpha=0.3)
-    plt.xlabel(r"Genomsnittligt medelvärde $p_{det}$")
+    plt.xlabel(r"Mean detection probability $p_{det}$ (averaged over distances)")
     plt.ylabel(r"$1/\Lambda$")
     plt.ylim(0, 1.2)
     plt.grid(True, which="both", linestyle="dotted")
     plt.tight_layout()
+    if out_path:
+        plt.savefig(out_path, dpi=150)
     plt.show()
 
 
 # --- Main-run ---
 def main():
-    # parametrar för data
+    # Data parameters
     distances = list(range(3, 51, 2))
     rounds = 50
     arr = np.linspace(0, np.pi / 2.0, 20, endpoint=True)
@@ -300,12 +309,12 @@ def main():
 
     data_csv = get_default_data_path()
 
-    # samla in nya mätvärden och spara kontinuerligt
+    # Collect missing measurements and save continuously (no-op when the CSV is complete)
     df = run_data_collection(distances, alphas, rounds, data_csv)
 
-        # --- Ny plot: pdet_mean vs alpha ---
+    # --- pdet_mean vs alpha ---
     plt.figure()
-    cmap = plt.get_cmap('tab20', len(distances))
+    cmap = plt.get_cmap("viridis")
 
     for idx, d in enumerate(distances):
         df_d = df[df["distance"] == d].sort_values("alpha")
@@ -315,26 +324,25 @@ def main():
             marker='.',
             linestyle='-',
             label=f"d={d}",
-            color=cmap(idx)
+            color=cmap(idx / max(len(distances) - 1, 1))
         )
 
-    plt.xlabel(r"Brusvinkel $\alpha$")
-    plt.ylabel(r"Medelvärde $p_{det}$")
+    plt.xlabel(r"Noise angle $\alpha$")
+    plt.ylabel(r"Mean detection probability $p_{det}$")
     plt.yscale('log')
-    plt.legend(title="Kodavstånd", bbox_to_anchor=(1.05, 1), loc='upper left')
+    plt.legend(title="Code distance", bbox_to_anchor=(1.05, 1), loc='upper left')
     plt.grid(True, which='both', linestyle='dotted')
     plt.tight_layout()
-    plt.savefig("pdet_vs_alpha.png", dpi=300)
     plt.show()
 
-    # --- Analys & plottning ---
+    # --- Analysis & plotting ---
     pdet_data, eps_data, eps_err_data = prepare_grouped_data(df, distances)
-    m_measured, m_theoretical, d_list = plot_error_vs_pdet(pdet_data, eps_data, eps_err_data, distances)
+    m_measured, m_theoretical, d_list = plot_error_vs_pdet(pdet_data, eps_data, eps_err_data, distances, out_path=FIGURE_DIR / "pdet_lepc.png")
 
     fit_slope_vs_distance(d_list, m_measured)
 
     compare_measured_theoretical(m_measured, m_theoretical)
-    plot_invLambda_vs_pdet(df)
+    plot_invLambda_vs_pdet(df, out_path=FIGURE_DIR / "pdet_invLambda.png")
 
 if __name__ == "__main__":
     main()
