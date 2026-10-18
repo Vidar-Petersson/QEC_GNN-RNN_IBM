@@ -52,13 +52,13 @@ class GMMClassifier:
 
     def compute_p_state(self, iq_data: np.ndarray) -> np.ndarray:
         """
-        Beräkna sannolikheten att tillståndet är 1 för varje IQ-sample.
+        Compute the probability that the state is 1 for each IQ sample.
 
         Args:
-            iq_data: np.ndarray med form (R, S, D) med komplexa IQ-värden.
+            iq_data: np.ndarray of shape (R, S, D) containing complex IQ values.
 
         Returns:
-            p_state1: np.ndarray med form (R, S, D), med sannolikheten att tillståndet = 1.
+            p_state1: np.ndarray of shape (R, S, D) with the probability that the state is 1.
         """
         if iq_data.ndim != 3:
             raise ValueError("iq_data must be a 3D array (rounds, shots, detectors)")
@@ -71,7 +71,7 @@ class GMMClassifier:
             feats = np.column_stack([flat[:, det].real, flat[:, det].imag])
             probs = self.models[det]['gmm'].predict_proba(feats)
 
-            # Hämta komponent-index för state = 1
+            # Get the component index for state = 1
             comp_for_state1 = self.models[det]['label_map'][1]
 
             p_state1_flat[:, det] = probs[:, comp_for_state1]

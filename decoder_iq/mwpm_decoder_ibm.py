@@ -58,7 +58,7 @@ class MWPMDecoder:
         rng = np.random.default_rng(42)
         perm = rng.permutation(num_total)
 
-        # Indexera direkt med permuteringen
+        # Index directly with the permutation
         val_idx = perm[:self.val_size]
         train_idx = perm[self.val_size:]
         self.val_detections, self.val_flips = self.detections[val_idx], self.flips[val_idx]

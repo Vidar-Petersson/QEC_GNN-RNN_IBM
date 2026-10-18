@@ -24,14 +24,14 @@ class GRUDecoder(nn.Module):
         super().__init__()
         self.args = args
 
-        # Dropout-layer för GNN embeddings
+        # Dropout layer for GNN embeddings
         self.dropout_gnn = nn.Dropout(p=0.2)
 
-        # Bygg GNN embedding-lager
+        # Build GNN embedding layers
         features = list(zip(args.embedding_features[:-1], args.embedding_features[1:]))
         self.embedding = nn.ModuleList([GraphConvLayer(a, b) for a, b in features])
 
-        # GRU med dropout mellan lager
+        # GRU with dropout between layers
         self.rnn = nn.GRU(
             args.embedding_features[-1],
             args.hidden_size,
@@ -40,7 +40,7 @@ class GRUDecoder(nn.Module):
             batch_first=True
         )
 
-        # Slutlig decoder
+        # Final decoder head
         self.decoder = nn.Sequential(
             nn.Linear(args.hidden_size, 1),
             nn.Sigmoid()
@@ -71,17 +71,17 @@ class GRUDecoder(nn.Module):
         gc = GraphCreator(self.args)
         gc.train_val_split()
 
-        # AdamW med weight decay
+        # AdamW with weight decay
         optim = AdamW(self.parameters(), lr=self.args.lr, weight_decay=1e-4)
 
-        # ReduceLROnPlateau baserat på val_loss
+        # ReduceLROnPlateau based on val_loss
         scheduler = ReduceLROnPlateau(optim, mode='min', factor=0.5, patience=5, min_lr=self.args.min_lr)
 
         best_val_acc = 0
         no_improve = 0
         start_epoch = 1
 
-        # Ladda ev. pretrained
+        # Load pretrained weights, if any
         if self.args.pretrained_checkpoint:
             ckpt_epoch = load_checkpoint(
                 self, self.args.pretrained_checkpoint,
@@ -133,7 +133,7 @@ class GRUDecoder(nn.Module):
 
             model_time = time.perf_counter() - t1
 
-            # Validering
+            # Validation
             self.eval()
             val_total_correct, val_total_loss, val_total_elements = 0, 0.0, 0
             with torch.no_grad():
@@ -152,11 +152,11 @@ class GRUDecoder(nn.Module):
                     val_total_correct += torch.sum(torch.round(final_prediction) == last_label).item()
                     val_total_elements += last_label.numel()
 
-                # Fysisk accuracy (alla samples)
+                # Physical accuracy (non-trivial samples only)
                 epoch_val_acc = val_total_correct / val_total_elements
                 epoch_val_loss = val_total_loss / len(validation_batches)
 
-                # Logical accuracy (med triviala inkluderade)
+                # Logical accuracy (trivial samples included)
                 epoch_val_log_acc = (val_total_correct + gc.val_num_trivial) / gc.val_size
 
             scheduler.step(epoch_val_loss)
@@ -192,8 +192,8 @@ class GRUDecoder(nn.Module):
     
     def test_model(self) -> tuple:
         """
-        Utvärderar modellen på test-datasetet och beräknar fysisk och logisk accuracy
-        med konsekvent viktning över alla exempel.
+        Evaluate the model on the held-out split and compute physical and logical
+        accuracy, weighted consistently over all samples.
         """
 
         gc = GraphCreator(self.args)
@@ -239,10 +239,10 @@ class GRUDecoder(nn.Module):
                 all_final_preds.append(final_pred.cpu())
                 all_last_labels.append(last_label.cpu())
 
-        # Physical accuracy (global viktning)
+        # Physical accuracy (non-trivial samples only)
         physical_acc = total_correct / total_elements
 
-        # Logical accuracy (inkluderar triviala)
+        # Logical accuracy (trivial samples included)
         logical_acc = (total_correct + gc.val_num_trivial) / gc.val_size
 
         avg_loss = total_loss / len(test_batches)

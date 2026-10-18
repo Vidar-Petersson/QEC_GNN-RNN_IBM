@@ -41,8 +41,8 @@ if __name__ == "__main__":
         n_gru_layers=4,
         log_wandb = True,
         simulator_backend = False,
-        pretrained_checkpoint = None, #"./models/train_final_t_d3_t6_dt2_250710_120202True.pt",   # Sökväg till .pt-fil att förträna från
-        resume = False,           # Om True, läs in optimizer‑ och scheduler‑status
+        pretrained_checkpoint = None, # Path to a .pt checkpoint to start from
+        resume = False,           # If True, also restore optimizer and scheduler state
         sub_dir="/turning_the_knob",
         detection_threshold=0.5
     )

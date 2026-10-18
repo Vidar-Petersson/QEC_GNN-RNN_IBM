@@ -109,7 +109,7 @@ class GraphCreator:
             chunk_labels: ndarray of shape [n], mapping each node to a time chunk (graph)
         """
         # Decode syndrome indices into (x, t) coordinates using precomputed detector layout
-        coords_list = [self.detector_coordinates[s] for s in detections]  # varje elem: [n_i, 2]
+        coords_list = [self.detector_coordinates[s] for s in detections]  # each element: [n_i, 2]
         probs_list  = [dp[s]                    for dp, s in zip(detection_probs, detections)]
 
         if self.sliding:
@@ -133,13 +133,13 @@ class GraphCreator:
                 chunk_idx, point_idx = np.where(mask)
                 order = np.argsort(chunk_idx)
 
-                # välj ut och justera coords
+                # Select and shift the coordinates
                 sel = point_idx[order]
                 chunks = chunk_idx[order]
                 c2 = coords[sel].copy()
-                c2[:,1] -= chunks            # gör tiderna lokala inom fönstret
+                c2[:,1] -= chunks            # make times local to the window
 
-                # välj ut motsvarande probs
+                # Select the corresponding probabilities
                 p2 = probs[sel]              # shape [ (#sel), ]
 
                 new_coords.append(c2)
@@ -251,7 +251,7 @@ class GraphCreator:
         rng  = np.random.default_rng(self.seed)
         perm = rng.permutation(num_total)
 
-        # Indexera direkt med permuteringen
+        # Index directly with the permutation
         val_idx   = perm[:self.val_size]
         train_idx = perm[self.val_size:]
 
@@ -352,7 +352,7 @@ class GraphCreator:
                 labels,
                 label_map,
                 edge_attr,
-                aligned_flips, # Bara för train all times
+                aligned_flips, # Only used with train_all_times
                 lengths, # -:-
                 last_label_batch,
                 last_label_batch_soft

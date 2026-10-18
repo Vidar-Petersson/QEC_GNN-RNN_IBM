@@ -107,7 +107,7 @@ class GraphCreator:
             chunk_labels: ndarray of shape [n], mapping each node to a time chunk (graph)
         """
         # Decode syndrome indices into (x, t) coordinates using precomputed detector layout
-        coords_list = [self.detector_coordinates[s] for s in detections]  # varje elem: [n_i, 2]
+        coords_list = [self.detector_coordinates[s] for s in detections]  # each element: [n_i, 2]
 
         if self.sliding:
             # Apply a sliding window over time to divide events into overlapping chunks
@@ -215,7 +215,7 @@ class GraphCreator:
         rng = np.random.default_rng(seed)
         perm = rng.permutation(num_total)
 
-        # Indexera direkt med permuteringen
+        # Index directly with the permutation
         val_idx = perm[:self.val_size]
         train_idx = perm[self.val_size:]
 

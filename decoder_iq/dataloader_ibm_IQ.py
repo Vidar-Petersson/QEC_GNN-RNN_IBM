@@ -49,7 +49,7 @@ class IBMSampler:
         sub_dir = self.sub_dir if self.sub_dir is not None else ""
         job_dir = Path(f"./jobdata/aer{sub_dir}") if self.simulator else Path(f"./jobdata/ibm{sub_dir}")
 
-        # Matcha alla shots (en eller flera siffror)
+        # Match any number of shots
         pattern = re.compile(rf"_({self.load_distance})_({self.t - 1})_(\d+)_({self.initial_state})_({self.noise_angle})")
 
         matching_files = [f for f in os.listdir(job_dir) if pattern.search(f)]
@@ -102,7 +102,7 @@ class IBMSampler:
         all_syndromes = []
         all_final_states = []
 
-        for filename in self.filenames:  # self.filenames sätts i __init__
+        for filename in self.filenames:  # self.filenames is set in __init__
             job_path = self.job_dir / filename
             with open(job_path) as f:
                 data = json.load(f, cls=RuntimeDecoder)
@@ -134,7 +134,7 @@ class IBMSampler:
                 all_final_states.append(final_state_soft)
             print(f"Loaded IQ-data from: {filename}")
 
-        # Slå ihop längs shots-axeln
+        # Concatenate along the shots axis
         syndromes_concat = np.concatenate(all_syndromes, axis=0)
         final_states_concat = np.concatenate(all_final_states, axis=0)
 
@@ -142,15 +142,15 @@ class IBMSampler:
     
     def plot_flip_distribution(self, flip_p, detector_idx=None, bins=50):
         """
-        Plotta fördelningen av flip-sannolikheter.
+        Plot the distribution of detection-event (flip) probabilities.
         
-        flip_p: np.ndarray shape (S, R-1, D)
-        detector_idx: int eller None. Om None plottas alla detektorer ihop.
-        bins: antal histogram-bins.
+        flip_p: np.ndarray of shape (shots, ancillas * (T-1))
+        detector_idx: int or None. If None, all detectors are plotted together.
+        bins: number of histogram bins.
         """
         ancillas = self.job_params["ancillas"]
         T = flip_p.shape[1] // ancillas
-        # Reshape till (shots, T, ancillas)
+        # Reshape to (shots, T, ancillas)
         resh = flip_p.reshape(-1, T, ancillas)
         if detector_idx is not None:
             data = resh[:, :, detector_idx].ravel()
@@ -168,7 +168,7 @@ class IBMSampler:
         #     x_vals = np.linspace(0, 1, 500)
         #     plt.plot(x_vals, kde(x_vals), color='black', lw=1.5, label='KDE')
         # except ImportError:
-        #     pass  # Om scipy inte finns, hoppa över KDE
+        #     pass  # Skip the KDE if scipy is not available
 
         plt.xlabel("Flip probability")
         plt.ylabel("Density")
@@ -227,26 +227,27 @@ class IBMSampler:
     def _extract_detection_event_probs(self, syndrome_soft: np.ndarray) -> np.ndarray:
         """
         syndrome_soft: np.array shape (shots, ancillas * time_steps)
-        Returnerar en matris shape (shots, ancillas*(time_steps-1))
-        med P(det_evt=1) för varje position.
+        Returns a matrix of shape (shots, ancillas*(time_steps-1))
+        with P(detection event = 1) for each position.
         """
         ancillas = self.job_params["ancillas"]
         T = syndrome_soft.shape[1] // ancillas
-        # Reshape till (shots, T, ancillas)
+        # Reshape to (shots, T, ancillas)
         resh = syndrome_soft.reshape(-1, T, ancillas)
-        # XOR‐sannolikhet längs tidsaxeln:
+        # XOR probability along the time axis:
         # P(flip@t) = p_t*(1-p_{t+1}) + (1-p_t)*p_{t+1}
         p_t   = resh[:, :-1, :]
         p_tp1 = resh[:,  1:, :]
         p_flip = p_t*(1-p_tp1) + (1-p_t)*p_tp1  # → (shots, T-1, ancillas)
-        # Platta ut till (shots, ancillas*(T-1))
+        # Flatten to (shots, ancillas*(T-1))
         return p_flip.reshape(resh.shape[0], -1)
         
     def _extract_logical_flip_probs(self, final_state_soft: np.ndarray, logical_index: int | None = 0) -> np.ndarray:
         """
-        final_state_soft: sannolikhet att det uppmätta tillståndet är 1, shape (shots, distance)
-        initial_logical_state: 0 eller 1 (från job_params)
-        Returnerar, sannolikhet att en flipp skett från initialiseringen, shape (shots,)
+        final_state_soft: probability that the measured state is 1, shape (shots, distance)
+        initial_logical_state: 0 or 1 (from job_params)
+        Returns the probability that a flip has occurred since initialisation,
+        shape (shots, t), or (shots, num_logicals, t) if logical_index is None.
         """
         init = self.job_params["initial_logical_state"]
         shots, num_logicals = final_state_soft.shape
@@ -270,26 +271,26 @@ class IBMSampler:
             matrix = np.zeros((shots, self.t))
             matrix[:, -1] = flips
             return matrix  # shape: (shots, t)
-        # Om init=0 är P(flip)=p_final, annars P(flip)=1-p_final
+        # If init=0 then P(flip)=p_final, otherwise P(flip)=1-p_final
 
 
     def load_jobdata(self, verbose: bool = True) -> Tuple[np.ndarray, np.ndarray]:
         """
         Main entry point: loads detection events and logical flip labels.
         Returns:
-            Tuple[np.ndarray, np.ndarray]: (detector events, final logical flips)
+            Tuple[np.ndarray, np.ndarray]: (detection event probabilities, logical flip probabilities)
         """
         t0 = time.perf_counter()
         syndromes_soft, middle_states, final_state_soft = self._load_json()
-        # Bygg hårda och mjuka syndrommatriser
+        # Build the soft syndrome matrix
         syndrome_soft_matrix = self._get_syndrome_matrix_soft(syndromes_soft, final_state_soft)
-        # Mjuka det‐events (sannolikheter)
+        # Soft detection events (probabilities)
         detection_events_probs = self._extract_detection_event_probs(syndrome_soft_matrix)
 
         trivial_share_before = np.mean(~np.any((detection_events_probs >= self.detection_threshold).astype(int), axis=1)) # Calculates share of trivial graphs
 
         if self.load_distance == self.distance:
-            logical_flips_probs = self._extract_logical_flip_probs(final_state_soft, logical_index=0) # Mjuka logiska flips
+            logical_flips_probs = self._extract_logical_flip_probs(final_state_soft, logical_index=0) # Soft logical flips
 
         else: # Here we use sampler to downsample to lower distances
             logical_flips_probs = self._extract_logical_flip_probs(final_state_soft, logical_index=None)

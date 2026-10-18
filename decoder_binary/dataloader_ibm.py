@@ -105,8 +105,8 @@ class IBMSampler:
         else:
             data = data[0]  # Experimental jobs are returned as a list
 
-            if len(data.data.keys()) > 4: #New repetition_code qiskit-qec
-                # 1) Separera ut code_bit och bygg listan av arrayer
+            if len(data.data.keys()) > 4: # Current repetition code circuit
+                # 1) Separate out code_bit and build the list of arrays
                 arrays = []
                 for name, reg in data.data.items():
                     bits = reg.get_bitstrings()
@@ -115,29 +115,29 @@ class IBMSampler:
                     else:
                         arrays.append(self._bitstrings_to_array(bits))
 
-                # 2) Skapa en 3D-array med form (R, S, Q):
-                #    R = antal register utom code_bit
-                #    S = antal upprepningar (shots)
-                #    Q = antal kvantbitar per register
-                regs = np.stack(arrays[::-1], axis=0)  # vänder ordningen och staplar
+                # 2) Create a 3D array of shape (R, S, Q):
+                #    R = number of registers except code_bit
+                #    S = number of repetitions (shots)
+                #    Q = number of qubits per register
+                regs = np.stack(arrays[::-1], axis=0)  # reverse the order and stack
 
-                # 3) Beräkna kumulativa syndrom-bitar (flipp/icke-flipp)
-                #    diff[i] = regs[i] != regs[i+1], form (R-1, S, Q)
+                # 3) Compute cumulative syndrome bits (flip/no flip)
+                #    diff[i] = regs[i] != regs[i+1], shape (R-1, S, Q)
                 diff = (regs[:-1] != regs[1:]).astype(np.uint8)
 
-                # 4) Lägg till sista registret oförändrat som sista skikt
-                last = regs[-1:].astype(np.uint8)  # form (1, S, Q)
+                # 4) Append the last register unchanged as the final layer
+                last = regs[-1:].astype(np.uint8)  # shape (1, S, Q)
 
-                # 5) Kombinera till syndrom-array form (R, S, Q)
+                # 5) Combine into a syndrome array of shape (R, S, Q)
                 syndrome_stack = np.concatenate([diff, last], axis=0)
 
-                # 6) Permutera så att första dimensionen är shots (S), sedan register×qubits
-                #    och sluttligen "flattenar" de två sista till en 2D-array
+                # 6) Permute so that the first dimension is shots (S), then registers x qubits,
+                #    and finally flatten the last two into a 2D array
                 shots = syndrome_stack.shape[1]
                 R, _, Q = syndrome_stack.shape
                 syndromes = syndrome_stack.transpose(1, 0, 2).reshape(shots, R * Q)
 
-            else: # Old code
+            else: # Older circuit layout
                 syndromes = self._bitstrings_to_array(data.data.syndromes.get_bitstrings())
                 final_state = self._bitstrings_to_array(data.data.final_state.get_bitstrings())
 
